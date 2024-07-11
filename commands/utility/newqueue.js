@@ -287,15 +287,18 @@ module.exports = {
             if (i.customId === 'join') {
                 if (mainQueue.size + guestCount < queueSpots) {
                     mainQueue.set(i.user.id, { id: i.user.id, username: i.user.username, guests: 0, ready: false });
+                    updateQueueEmbed();
+                    await i.update({ embeds: [queueEmbed] });
+                    await i.followUp({ content: 'Your have been added to the queue.', ephemeral: true });
                 } else if (waitlist.size < waitlistSpots) {
                     waitlist.set(i.user.id, { id: i.user.id, username: i.user.username, guests: 0, ready: false });
+                    updateQueueEmbed();
+                    await i.update({ embeds: [queueEmbed] });
+                    await i.followUp({ content: 'Your have been added to the waitlist since the queue is full.', ephemeral: true });
                 } else {
                     await i.reply({ content: 'Both the main queue and the waitlist are full.', ephemeral: true });
                     return;
                 }
-
-                updateQueueEmbed();
-                await i.update({ embeds: [queueEmbed] });
             }
             if (i.customId === 'addGuest') {
                 if (mainQueue.has(i.user.id)) {
@@ -305,17 +308,17 @@ module.exports = {
                     } else if (mainQueue.size + guestCount < queueSpots) {
                         mainQueue.get(i.user.id).guests++;
                         guestCount++;
+                        updateQueueEmbed();
+                        await i.update({ embeds: [queueEmbed] });
+                        await i.followUp({ content: 'Your guest has been added to the queue.', ephemeral: true });
                     } else {
                         await i.reply({ content: 'The main queue is full. Guests may not be added to the waitlist.', ephemeral: true });
                         return;
                     }
                 } else {
-                    await i.reply({ content: 'The main queue is full. Guests may not be added to the waitlist.', ephemeral: true });
+                    await i.reply({ content: 'You must be in the main queue to add a guest.', ephemeral: true });
                     return;
                 }
-
-                updateQueueEmbed();
-                await i.update({ embeds: [queueEmbed] });
             }
             if (i.customId === 'leave') {
                 if (mainQueue.has(i.user.id)) {
