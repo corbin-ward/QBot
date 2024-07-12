@@ -14,9 +14,9 @@ module.exports = {
 		});
 
 		if(mongoose.connect) {
-			console.log('Connected to database.');
+			console.log('Connected to database');
 		} else {
-			console.log('Failed to connect to database.');
+			console.log('Failed to connect to database');
 		}
 
 		console.log(`Ready! Logged in as ${client.user.tag}`);
