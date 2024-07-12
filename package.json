@@ -10,7 +10,9 @@
   "description": "",
   "dependencies": {
     "discord.js": "^14.15.3",
-    "moment-timezone": "^0.5.45"
+    "moment-timezone": "^0.5.45",
+    "mongodb": "^6.8.0",
+    "mongoose": "^8.5.0"
   },
   "devDependencies": {
     "eslint": "^9.5.0"
