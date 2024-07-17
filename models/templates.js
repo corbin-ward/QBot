@@ -1,10 +1,6 @@
-const { Schema, model } = require('mongoose');
+const { Schema, model, Types } = require('mongoose');
 
 const templatesSchema = new Schema({
-    templateId: {
-        type: ObjectId,
-        required: true,
-    },
     creatorId: {
         type: String,
         required: true,
@@ -13,16 +9,16 @@ const templatesSchema = new Schema({
         type: String,
         required: true,
     },
-    icon: {
+    iconUrl: {
         type: String,
         required: true,
     },
     queueSpots: {
-        type: Int32,
+        type: Number,
         required: true,
     },
     waitlistSpots: {
-        type: Int32,
+        type: Number,
         required: true,
     }
 })
