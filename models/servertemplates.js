@@ -1,4 +1,4 @@
-const { Schema, model } = require('mongoose');
+const { Schema, model, Types } = require('mongoose');
 
 const serverTemplatesSchema = new Schema({
     serverId: {
@@ -6,12 +6,9 @@ const serverTemplatesSchema = new Schema({
         required: true,
     },
     templateId: {
-        type: ObjectId,
+        type: Types.ObjectId,
         required: true,
-    },
-    dateAdded: {
-        type: Date,
-        required: true,
+        ref: 'templates'
     }
 })
 

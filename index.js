@@ -12,11 +12,11 @@ client.activeQueues = new Collection();
 // COMMAND HANDLING
 client.commands = new Collection();
 client.cooldowns = new Collection();
-const foldersPath = path.join(__dirname, 'commands');
-const commandFolders = fs.readdirSync(foldersPath);
+const commandFoldersPath = path.join(__dirname, 'commands');
+const commandFolders = fs.readdirSync(commandFoldersPath);
 
 for (const folder of commandFolders) {
-	const commandsPath = path.join(foldersPath, folder);
+	const commandsPath = path.join(commandFoldersPath, folder);
 	const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith('.js'));
 	for (const file of commandFiles) {
 		const filePath = path.join(commandsPath, file);
