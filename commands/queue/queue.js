@@ -217,9 +217,11 @@ module.exports = {
                     let mainQueue = new Map();
                     let waitlist = new Map();
                     let userReadyUpTimes = new Map();
+                    let cancelled = false;
             
                     // Create the embed message for the queue
                     const queueEmbed = new EmbedBuilder()
+                        .setColor(0x5A6AEF)
                         .setAuthor({ name: `Started by ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL()})
                         .setTitle(name)
                         .setDescription(`Starts at <t:${unixStart}:t>`)
@@ -304,13 +306,11 @@ module.exports = {
             
                     // Function to check the queue status
                     function checkQueue(collector) {
-                        if ((mainQueue.size + guestCount >= queueSpots) && (Array.from(mainQueue.values()).every(user => user.ready))) {
+                        if (((mainQueue.size + guestCount >= queueSpots) && (Array.from(mainQueue.values()).every(user => user.ready))) || ((waitlist.size === 0) && (Array.from(mainQueue.values()).every(user => user.ready)))) {
                             collector.stop();
-                            queueEmbed.setTitle(`${name} - Closed`);
-                            response.edit({ embeds: [queueEmbed], components: [] });
-                        } else if ((waitlist.size === 0) && (Array.from(mainQueue.values()).every(user => user.ready))) {
-                            collector.stop();
-                            queueEmbed.setTitle(`${name} - Closed`);
+                            queueEmbed
+                                .setColor(0x4E5058)
+                                .setTitle(`${name} - Closed`);
                             response.edit({ embeds: [queueEmbed], components: [] });
                         }
                     }
@@ -421,10 +421,22 @@ module.exports = {
                             }
                             if (i.customId === 'cancel') {
                                 if (i.user.id === queueCreator) {
-                                    await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
-                                    await i.message.delete();
-                                    interaction.client.activeQueues.delete(queueCreator);
+                                    cancelled = true;
                                     queueCollector.stop(); // Stop the collector when the queue is canceled
+                                    queueEmbed
+                                        .setColor(0xD83941)
+                                        .setTitle(`${name} - Cancelled`)
+                                        .setDescription(`Cancelled before <t:${unixStart}:t>`);  
+                                    const disabledQueueButtons = new ActionRowBuilder()  
+                                        .addComponents(
+                                            join.setDisabled(true),
+                                            addGuest.setDisabled(true),
+                                            leave.setDisabled(true),
+                                            cancel.setDisabled(true)
+                                        );
+                                    await response.edit({ embeds: [queueEmbed], components: [disabledQueueButtons] });
+                                    interaction.client.activeQueues.delete(queueCreator);
+                                    await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
                                 } else {
                                     await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
                                 }
@@ -438,8 +450,13 @@ module.exports = {
             
                     // Handle the end of the queue collector
                     queueCollector.on('end', async () => {
+                        if (cancelled == true) return;
+
                         try {
-                            queueEmbed.setDescription(`Started at <t:${unixStart}:t>`);
+                            if (cancelled !== true) {}
+                            queueEmbed
+                                .setColor(0x297F48)
+                                .setDescription(`Started at <t:${unixStart}:t>`);
                             await response.edit({ embeds: [queueEmbed], components: [readyUpButtons] });
             
                             const readyUpCollector = response.createMessageComponentCollector({
@@ -498,11 +515,21 @@ module.exports = {
                                     }
                                     if (i.customId === 'cancel') {
                                         if (i.user.id === queueCreator) {
-                                            await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
-                                            await i.message.delete();
-                                            userReadyUpTimes.clear();
                                             readyUpCollector.stop(); // Stop the collector when the queue is canceled
+                                            userReadyUpTimes.clear();
+                                            queueEmbed
+                                                .setColor(0xD83941)
+                                                .setTitle(`${name} - Cancelled`)
+                                                .setDescription(`Cancelled after <t:${unixStart}:t>`);  
+                                            const disabledReadyButtons = new ActionRowBuilder()  
+                                                .addComponents(
+                                                    readyUp.setDisabled(true),
+                                                    leave.setDisabled(true),
+                                                    cancel.setDisabled(true)
+                                                );
+                                            await response.edit({ embeds: [queueEmbed], components: [disabledReadyButtons] });
                                             interaction.client.activeQueues.delete(queueCreator);
+                                            await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
                                         } else {
                                             await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
                                         }
@@ -527,9 +554,6 @@ module.exports = {
                     interaction.reply({ content: 'An error occurred while processing your request. Please try again later.', ephemeral: true });
                 }
                 break;
-            }
-            case 'cancel': {
-                // TODO: Implement cancel logic
             }
             case 'kick': {
                 // TODO: Implement kick logic

@@ -99,7 +99,7 @@ module.exports = {
 
                     const loadedTemplateIds = serverTemplates.map(st => st.templateId.toString());
                     const choices = templates.map(template => ({
-                        name: `${loadedTemplateIds.includes(template._id.toString()) ? ' ✅' : '⬇️'} - ${template.name} by ${template.creatorUsername}`,
+                        name: `${loadedTemplateIds.includes(template._id.toString()) ? ' ✅' : '🚫'} - ${template.name} by ${template.creatorUsername}`,
                         value: template._id.toString()
                     }));
                     const filtered = choices.filter(choice => 
@@ -210,7 +210,7 @@ module.exports = {
 
                     // Check if the user is the creator of the template
                     if (template.creatorId !== interaction.user.id) {
-                        return interaction.reply({ content: 'Only the author is this template is authorized to delete it from the server it was created in.', ephemeral: true });
+                        return interaction.reply({ content: 'Only the author is this template is authorized to delete it.', ephemeral: true });
                     }
 
                     // Delete the template
