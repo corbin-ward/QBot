@@ -40,13 +40,6 @@ function parseTime(input, timezone) {
 
 // Function to update the embed and status
 async function updateQueueEmbed(queueData, status, name, start) {
-    const statusColors = {
-        pending: 0x5A6AEF,
-        readying: 0x297F48,
-        canceled: 0xD83941,
-        closed: 0x4E5058
-    };
-
     const joinButton = new ButtonBuilder()
         .setCustomId('join')
         .setLabel('Join')
