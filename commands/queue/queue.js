@@ -39,7 +39,7 @@ function parseTime(input, timezone) {
 }
 
 // Function to update the embed and status
-async function updateQueueEmbed(queueData, status, name, start) {
+async function updateStatus(queueData, status) {
     const joinButton = new ButtonBuilder()
         .setCustomId('join')
         .setLabel('Join')
@@ -84,28 +84,28 @@ async function updateQueueEmbed(queueData, status, name, start) {
         case 'pending': {
             queueData.queueEmbed
                 .setColor(0x5A6AEF)
-                .setTitle(name)
-                .setDescription(`Starts at <t:${start}:t>`);
+                .setTitle(queueData.name)
+                .setDescription(`Starts at <t:${queueData.start}:t>`);
             break;
         }
         case 'readying': {
             queueData.queueEmbed
                 .setColor(0x297F48)
-                .setTitle(`${name} - Readying Up`)
-                .setDescription(`Closed at <t:${start}:t>`);
+                .setTitle(`${queueData.name} - Readying Up`)
+                .setDescription(`Closed at <t:${queueData.start}:t>`);
             break;
         }
         case 'canceled': {
             if(prevStatus === 'readying') {
                 queueData.queueEmbed
                     .setColor(0xD83941)
-                    .setTitle(`${name} - Canceled`)
-                    .setDescription(`Canceled after <t:${start}:t>`);
+                    .setTitle(`${queueData.name} - Canceled`)
+                    .setDescription(`Canceled after <t:${queueData.start}:t>`);
             } else {
                 queueData.queueEmbed
                     .setColor(0xD83941)
-                    .setTitle(`${name} - Canceled`)
-                    .setDescription(`Canceled before <t:${start}:t>`);
+                    .setTitle(`${queueData.name} - Canceled`)
+                    .setDescription(`Canceled before <t:${queueData.start}:t>`);
             }
             break;
         }
@@ -113,13 +113,13 @@ async function updateQueueEmbed(queueData, status, name, start) {
             if(prevStatus === 'readying') {
                 queueData.queueEmbed
                     .setColor(0x7D50A0)
-                    .setTitle(`${name} - Started`)
-                    .setDescription(`Started at <t:${start}:t>`);
+                    .setTitle(`${queueData.name} - Started`)
+                    .setDescription(`Started at <t:${queueData.start}:t>`);
             } else {
                 queueData.queueEmbed
                     .setColor(0x4E5058)
-                    .setTitle(`${name} - Closed`)
-                    .setDescription(`Closed at <t:${start}:t>`);
+                    .setTitle(`${queueData.name} - Closed`)
+                    .setDescription(`Closed at <t:${queueData.start}:t>`);
             }
             break;
         }
@@ -155,6 +155,17 @@ async function updateQueueEmbed(queueData, status, name, start) {
     );
 
     await queueData.response.edit({ embeds: [queueData.queueEmbed], components: [queueData.buttons] });
+}
+
+// Function to move users from the waitlist to the main queue
+function waitlistToQueue(queueData) {
+    while (queueData.mainQueue.size + queueData.guestCount < queueData.queueSpots && queueData.waitlist.size > 0) {
+        const [userId, user] = queueData.waitlist.entries().next().value;
+        queueData.waitlist.delete(userId);
+        queueData.mainQueue.set(userId, user);
+        setReadyUpTimer(user);
+    }
+    updateStatus(queueData, queueData.status);
 }
 
 module.exports = {
@@ -218,7 +229,7 @@ module.exports = {
             subcommand
                 .setName('kick')
                 .setDescription('Kick a user from the queue or waitlist')
-                .addStringOption(option =>
+                .addUserOption(option =>
                     option.setName('user')
                     .setDescription('The tag of the user to kick (e.g. "@user")')
                     .setRequired(true)
@@ -264,6 +275,8 @@ module.exports = {
 
         // Access or initialize the queue data for the user in this server
         let queueData = interaction.client.activeQueues.get(queueKey) || {
+            name: null,
+            start: null,
             queueSpots: 1,
             waitlistSpots: 0,
             mainQueue: new Map(),
@@ -273,7 +286,8 @@ module.exports = {
             queueEmbed: null,
             buttons: null,
             response: null,
-            status: 'pending'
+            status: 'pending',
+            collector: null,
         };
 
         switch (subcommand) {
@@ -286,8 +300,6 @@ module.exports = {
                     
                     const timeInput = interaction.options.getString('time');
                     const timezone = interaction.options.getString('timezone');
-
-                    let name;
 
                     if (subcommand === 'new') {
                         const templateId = interaction.options.getString('template-id');
@@ -313,7 +325,7 @@ module.exports = {
                                 return interaction.reply({ content: 'Template is not loaded in this server. Please load the template first.', ephemeral: true });
                             }
 
-                            name = template.name;
+                            queueData.name = template.name;
                             thumbnailURL = template.iconUrl;
                             queueData.queueSpots = template.queueSpots;
                             queueData.waitlistSpots = template.waitlistSpots;
@@ -322,7 +334,7 @@ module.exports = {
                             return interaction.reply({ content: 'An error occurred while fetching the template. Please try again later.', ephemeral: true });
                         }
                     } else {
-                        name = interaction.options.getString('name');
+                        queueData.name = interaction.options.getString('name');
                         thumbnailURL = 'https://i.imgur.com/j1LmKzM.png';
                         queueData.queueSpots = interaction.options.getInteger('queue-spots');
                         queueData.waitlistSpots = interaction.options.getInteger('waitlist-spots');
@@ -356,14 +368,14 @@ module.exports = {
                         return interaction.reply({ content: 'Invalid time input. Please use a valid time format e.g. "11:30 PM".', ephemeral: true });
                     }
             
-                    const unixStart = Math.floor(startTime.unix());
+                    queueData.start = Math.floor(startTime.unix());
             
                     // Create the embed message for the queue
                     queueData.queueEmbed = new EmbedBuilder()
                         .setColor(0x5A6AEF)
                         .setAuthor({ name: `Started by ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL()})
-                        .setTitle(name)
-                        .setDescription(`Starts at <t:${unixStart}:t>`)
+                        .setTitle(queueData.name)
+                        .setDescription(`Starts at <t:${queueData.start}:t>`)
                         .setThumbnail(thumbnailURL)
                         .addFields(
                             { name: 'Main Queue', value: `${queueData.queueSpots}/${queueData.queueSpots} Spots Left\n\n\n\u200B`, inline: true },
@@ -379,25 +391,14 @@ module.exports = {
             
                     // Mark the user as having an active queue in this server
                     interaction.client.activeQueues.set(queueKey, queueData);
-                    updateQueueEmbed(queueData, 'pending', name, unixStart);
+                    updateStatus(queueData, 'pending');
             
                     // Function to check the queue status
-                    function checkQueue(collector) {
+                    function checkQueue(queueData) {
                         if (((queueData.mainQueue.size + queueData.guestCount >= queueData.queueSpots) && (Array.from(queueData.mainQueue.values()).every(user => user.ready))) || ((queueData.waitlist.size === 0) && (Array.from(queueData.mainQueue.values()).every(user => user.ready)))) {
-                            collector.stop();
-                            updateQueueEmbed(queueData, 'closed', name, unixStart);
+                            queueData.collector.stop();
+                            updateStatus(queueData, 'closed');
                         }
-                    }
-            
-                    // Function to move users from the waitlist to the main queue
-                    function moveFromWaitlistToQueue() {
-                        while (queueData.mainQueue.size + queueData.guestCount < queueData.queueSpots && queueData.waitlist.size > 0) {
-                            const [userId, user] = queueData.waitlist.entries().next().value;
-                            queueData.waitlist.delete(userId);
-                            queueData.mainQueue.set(userId, user);
-                            setReadyUpTimer(user);
-                        }
-                        updateQueueEmbed(queueData, queueData.status, name, unixStart);
                     }
             
                     // Function to set the ready-up timer for users
@@ -408,7 +409,7 @@ module.exports = {
             
                         // Send a DM to the user notifying them to ready up
                         interaction.client.users.fetch(user.id).then(userObj => {
-                            userObj.send(`${name} in ${interaction.guild.name} is starting!\n\nQueue Link: ${queueData.response.url}\n\nYou must ready up <t:${readyUpTimestamp}:R> or you'll be removed from the queue.`);
+                            userObj.send(`${queueData.name} in ${interaction.guild.name} is starting!\n\nQueue Link: ${queueData.response.url}\n\nYou must ready up <t:${readyUpTimestamp}:R> or you'll be removed from the queue.`);
                         });
             
                         setTimeout(async () => {
@@ -420,12 +421,12 @@ module.exports = {
             
                                 // Send a DM to the user notifying them they have been removed from the queue
                                 interaction.client.users.fetch(user.id).then(userObj => {
-                                    userObj.send(`You did not ready up in time and have been removed from the queue for ${name} in ${interaction.guild.name}.`);
+                                    userObj.send(`You did not ready up in time and have been removed from the queue for ${queueData.name} in ${interaction.guild.name}.`);
                                 });
             
-                                checkQueue(collector);
-                                moveFromWaitlistToQueue();
-                                updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                checkQueue(queueData);
+                                waitlistToQueue(queueData);
+                                updateStatus(queueData, queueData.status);
                             }
                         }, timeToReadyUp * 60 * 1_000);
                     }
@@ -433,19 +434,21 @@ module.exports = {
                     // Collector for handling button interactions
                     const queueCollector = queueData.response.createMessageComponentCollector({
                         componentType: ComponentType.Button,
-                        time: (unixStart - moment().unix()) * 1_000
+                        time: (queueData.start - moment().unix()) * 1_000
                     });
+
+                    queueData.collector = queueCollector;
             
                     queueCollector.on('collect', async (i) => {
                         try {
                             if (i.customId === 'join') {
                                 if (queueData.mainQueue.size + queueData.guestCount < queueData.queueSpots) {
                                     queueData.mainQueue.set(i.user.id, { id: i.user.id, username: i.user.username, guests: 0, ready: false });
-                                    updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                    updateStatus(queueData, queueData.status);
                                     await i.reply({ content: 'You have been added to the queue.', ephemeral: true });
                                 } else if (queueData.waitlist.size < queueData.waitlistSpots) {
                                     queueData.waitlist.set(i.user.id, { id: i.user.id, username: i.user.username, guests: 0, ready: false });
-                                    updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                    updateStatus(queueData, queueData.status);
                                     await i.reply({ content: 'You have been added to the waitlist since the queue is full.', ephemeral: true });
                                 } else {
                                     await i.reply({ content: 'Both the main queue and the waitlist are full.', ephemeral: true });
@@ -460,7 +463,7 @@ module.exports = {
                                     } else if (queueData.mainQueue.size + queueData.guestCount < queueData.queueSpots) {
                                         queueData.mainQueue.get(i.user.id).guests++;
                                         queueData.guestCount++;
-                                        updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                        updateStatus(queueData, queueData.status);
                                         await i.reply({ content: 'Your guest has been added to the queue.', ephemeral: true });
                                     } else {
                                         await i.reply({ content: 'The main queue is full. Guests may not be added to the waitlist.', ephemeral: true });
@@ -475,11 +478,12 @@ module.exports = {
                                 if (queueData.mainQueue.has(i.user.id)) {
                                     queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(i.user.id).guests;
                                     queueData.mainQueue.delete(i.user.id);
-                                    updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                    waitlistToQueue(queueData);
+                                    updateStatus(queueData, queueData.status);
                                     await i.reply({ content: 'You have been removed from the queue.', ephemeral: true });
                                 } else if (queueData.waitlist.has(i.user.id)) {
                                     queueData.waitlist.delete(i.user.id);
-                                    updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                    updateStatus(queueData, queueData.status);
                                     await i.reply({ content: 'You have been removed from the waitlist.', ephemeral: true });
                                 } else {
                                     await i.reply({ content: 'You are not in the queue.', ephemeral: true });
@@ -488,10 +492,10 @@ module.exports = {
                             }
                             if (i.customId === 'cancel') {
                                 if (i.user.id === queueCreator) {
-                                    updateQueueEmbed(queueData, 'canceled', name, unixStart); 
+                                    updateStatus(queueData, 'canceled'); 
                                     queueCollector.stop(); // Stop the collector when the queue is canceled
                                     interaction.client.activeQueues.delete(queueKey);
-                                    await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
+                                    await i.reply({ content: `The ${queueData.name} queue for <t:${queueData.start}:t> has been canceled`, ephemeral: true });
                                 } else {
                                     await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
                                 }
@@ -508,18 +512,20 @@ module.exports = {
                         if (queueData.status === 'canceled') return;
 
                         try {
-                            updateQueueEmbed(queueData, 'readying', name, unixStart);
+                            updateStatus(queueData, 'readying');
             
                             const readyUpCollector = queueData.response.createMessageComponentCollector({
                                 componentType: ComponentType.Button
                             });
+
+                            queueData.collector = readyUpCollector;
             
                             // Set timers for original users in the main queue
                             queueData.mainQueue.forEach((user) => {
                                 setReadyUpTimer(user, readyUpCollector);
                             });
             
-                            checkQueue(readyUpCollector);
+                            checkQueue(queueData);
             
                             readyUpCollector.on('collect', async (i) => {
                                 try {
@@ -528,10 +534,10 @@ module.exports = {
                                             queueData.mainQueue.get(i.user.id).ready = true;
                                             queueData.userReadyUpTimes.delete(i.user.id);
                 
-                                            updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                            updateStatus(queueData, queueData.status);
                                             // Notify the user they have successfully readied up
                                             await i.reply({ content: `<@${i.user.id}>, you have successfully readied up!`, ephemeral: true });
-                                            checkQueue(readyUpCollector);
+                                            checkQueue(queueData);
                                         } else {
                                             await i.reply({ content: 'You are not in the main queue.', ephemeral: true });
                                         }
@@ -547,14 +553,14 @@ module.exports = {
                                             queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(i.user.id).guests;
                                             queueData.mainQueue.delete(i.user.id);
                                             queueData.userReadyUpTimes.delete(i.user.id);
-                                            checkQueue(readyUpCollector);
-                                            moveFromWaitlistToQueue();
-                                            updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                            checkQueue(queueData);
+                                            waitlistToQueue(queueData);
+                                            updateStatus(queueData, queueData.status);
                                             await i.reply({ content: 'You have been removed from the queue.', ephemeral: true });
                                         } else if (queueData.waitlist.has(i.user.id)) {
                                             queueData.waitlist.delete(i.user.id);
-                                            checkQueue(readyUpCollector);
-                                            updateQueueEmbed(queueData, queueData.status, name, unixStart);
+                                            checkQueue(queueData);
+                                            updateStatus(queueData, queueData.status);
                                             await i.reply({ content: 'You have been removed from the waitlist.', ephemeral: true });
                                         } else {
                                             await i.reply({ content: 'You are not in the queue.', ephemeral: true });
@@ -563,11 +569,11 @@ module.exports = {
                                     }
                                     if (i.customId === 'cancel') {
                                         if (i.user.id === queueCreator) {
-                                            updateQueueEmbed(queueData, 'canceled', name, unixStart);
+                                            updateStatus(queueData, 'canceled');
                                             readyUpCollector.stop(); // Stop the collector when the queue is canceled
                                             queueData.userReadyUpTimes.clear();
                                             interaction.client.activeQueues.delete(queueKey);
-                                            await i.reply({ content: `The ${name} queue for <t:${unixStart}:t> has been canceled`, ephemeral: true });
+                                            await i.reply({ content: `The ${queueData.name} queue for <t:${queueData.start}:t> has been canceled`, ephemeral: true });
                                         } else {
                                             await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
                                         }
@@ -594,15 +600,55 @@ module.exports = {
                 break;
             }
             case 'kick': {
-                const userToKick = interaction.options.getString('user');
+                const userToKick = interaction.options.getUser('user');
+                console.log(userToKick);
 
                 // Validate if the command issuer is the queue creator
                 if (interaction.client.activeQueues.has(queueKey)) {
                     let queueData = interaction.client.activeQueues.get(queueKey);
-                    let userKicked = false;
 
-                    // Check if the user is in the main queue
-                    
+                    // Check if user is trying to kick themselves
+                    if (userToKick.id === interaction.user.id) {
+                        await interaction.reply({ content: 'You may not kick yourself from your own queue.', ephemeral: true });
+                        return;
+                    }
+
+                    // Check if the user is in the main queue or waitlist
+                    if (queueData.mainQueue.has(userToKick.id)) {
+                        if (queueData.status === 'pending') {
+                            queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(userToKick.id).guests;
+                            queueData.mainQueue.delete(userToKick.id);
+                            waitlistToQueue(queueData);
+                            updateStatus(queueData, queueData.status, queueData.startTime);
+                            await interaction.reply({ content: `${userToKick} has been kicked from the main queue.`, ephemeral: true });
+                        } else if (queueData.status === 'readying') {
+                            queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(userToKick.id).guests;
+                            queueData.mainQueue.delete(userToKick.id);
+                            queueData.userReadyUpTimes.delete(userToKick.id);
+                            checkQueue(queueData);
+                            waitlistToQueue(queueData);
+                            updateStatus(queueData, queueData.status, queueData.startTime);
+                            await interaction.reply({ content: `${userToKick} has been kicked from the main queue.`, ephemeral: true });
+                        } else {
+
+                        }
+                    } else if (queueData.waitlist.has(userToKick.id)) {
+                        if (queueData.status === 'pending') {
+                            queueData.waitlist.delete(userToKick.id);
+                            updateStatus(queueData, queueData.status, queueData.startTime);
+                            await interaction.reply({ content: `${userToKick} has been kicked from the waitlist.`, ephemeral: true });
+                        } else if (queueData.status === 'readying') {
+                            queueData.waitlist.delete(userToKick.id);
+                            checkQueue(queueData);
+                            updateStatus(queueData, queueData.status, queueData.startTime);
+                            await interaction.reply({ content: `${userToKick} has been kicked from the waitlist.`, ephemeral: true });
+                        } else {
+                            
+                        }
+                    } else {
+                        await interaction.reply({ content: `${userToKick} is not in the queue or waitlist.`, ephemeral: true });
+                    }
+
                 } else {
                     await interaction.reply({ content: 'You do not have an active queue to kick users from.', ephemeral: true });
                 }
