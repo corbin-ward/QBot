@@ -5,6 +5,9 @@ const mongoose = require('mongoose');
 const templatesModel = require('../../models/templates');
 const serverTemplatesModel = require('../../models/servertemplates');
 
+const maxGuests = 1;
+const timeToReadyUp = 1; // Time in minutes to ready up
+
 // Function to parse the provided time input into a valid time object in the specified timezone
 function parseTime(input, timezone) {
     const formats = [
@@ -165,45 +168,17 @@ function waitlistToQueue(queueData) {
         queueData.mainQueue.set(userId, user);
         setReadyUpTimer(queueData, user);
     }
-    updateStatus(queueData, queueData.status);
 }
 
 // Function to check the queue status
 function checkQueue(queueData) {
     if (((queueData.mainQueue.size + queueData.guestCount >= queueData.queueSpots) && (Array.from(queueData.mainQueue.values()).every(user => user.ready))) || ((queueData.waitlist.size === 0) && (Array.from(queueData.mainQueue.values()).every(user => user.ready)))) {
-        queueData.collector.stop();
         updateStatus(queueData, 'closed');
+        queueData.collector.stop();
     }
-}
-
-// Function to set the ready-up timer for users
-function setReadyUpTimer(queueData, user) {
-    const readyUpEndTime = Date.now() + timeToReadyUp * 60 * 1_000;
-    const readyUpTimestamp = Math.round(readyUpEndTime / 1_000);
-    queueData.userReadyUpTimes.set(user.id, readyUpEndTime);
-
-    // Send a DM to the user notifying them to ready up
-    interaction.client.users.fetch(user.id).then(userObj => {
-        userObj.send(`${queueData.name} in ${interaction.guild.name} is starting!\n\nQueue Link: ${queueData.response.url}\n\nYou must ready up <t:${readyUpTimestamp}:R> or you'll be removed from the queue.`);
-    });
-
-    setTimeout(async () => {
-        if (queueData.userReadyUpTimes.get(user.id) === readyUpEndTime) {
-            queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(user.id).guests;
-            queueData.mainQueue.delete(user.id);
-            queueData.waitlist.delete(user.id);
-            queueData.userReadyUpTimes.delete(user.id);
-
-            // Send a DM to the user notifying them they have been removed from the queue
-            interaction.client.users.fetch(user.id).then(userObj => {
-                userObj.send(`You did not ready up in time and have been removed from the queue for ${queueData.name} in ${interaction.guild.name}.`);
-            });
-
-            checkQueue(queueData);
-            waitlistToQueue(queueData);
-            updateStatus(queueData, queueData.status);
-        }
-    }, timeToReadyUp * 60 * 1_000);
+    else {
+        updateStatus(queueData, queueData.status);
+    }
 }
 
 module.exports = {
@@ -328,12 +303,39 @@ module.exports = {
             collector: null,
         };
 
+        // Function to set the ready-up timer for users
+        function setReadyUpTimer(queueData, user) {
+            const readyUpEndTime = Date.now() + timeToReadyUp * 60 * 1_000;
+            const readyUpTimestamp = Math.round(readyUpEndTime / 1_000);
+            queueData.userReadyUpTimes.set(user.id, readyUpEndTime);
+
+            // Send a DM to the user notifying them to ready up
+            interaction.client.users.fetch(user.id).then(userObj => {
+                userObj.send(`${queueData.name} in ${interaction.guild.name} is starting!\n\nQueue Link: ${queueData.response.url}\n\nYou must ready up <t:${readyUpTimestamp}:R> or you'll be removed from the queue.`);
+            });
+
+            setTimeout(async () => {
+                if (queueData.userReadyUpTimes.get(user.id) === readyUpEndTime) {
+                    queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(user.id).guests;
+                    queueData.mainQueue.delete(user.id);
+                    queueData.waitlist.delete(user.id);
+                    queueData.userReadyUpTimes.delete(user.id);
+
+                    // Send a DM to the user notifying them they have been removed from the queue
+                    interaction.client.users.fetch(user.id).then(userObj => {
+                        userObj.send(`You did not ready up in time and have been removed from the queue for ${queueData.name} in ${interaction.guild.name}.`);
+                    });
+
+                    waitlistToQueue(queueData);
+                    checkQueue(queueData);
+                }
+            }, timeToReadyUp * 60 * 1_000);
+        }
+
         switch (subcommand) {
             case 'new':
             case 'manual': {
                 try {
-                    const maxGuests = 1;
-                    const timeToReadyUp = 1; // Time in minutes to ready up
                     const queueCreator = interaction.user.id;
                     
                     const timeInput = interaction.options.getString('time');
@@ -533,11 +535,9 @@ module.exports = {
                                         if (queueData.mainQueue.has(i.user.id)) {
                                             queueData.mainQueue.get(i.user.id).ready = true;
                                             queueData.userReadyUpTimes.delete(i.user.id);
-                
-                                            updateStatus(queueData, queueData.status);
+                                            checkQueue(queueData);
                                             // Notify the user they have successfully readied up
                                             await i.reply({ content: `<@${i.user.id}>, you have successfully readied up!`, ephemeral: true });
-                                            checkQueue(queueData);
                                         } else {
                                             await i.reply({ content: 'You are not in the main queue.', ephemeral: true });
                                         }
@@ -553,14 +553,12 @@ module.exports = {
                                             queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(i.user.id).guests;
                                             queueData.mainQueue.delete(i.user.id);
                                             queueData.userReadyUpTimes.delete(i.user.id);
-                                            checkQueue(queueData);
                                             waitlistToQueue(queueData);
-                                            updateStatus(queueData, queueData.status);
+                                            checkQueue(queueData);
                                             await i.reply({ content: 'You have been removed from the queue.', ephemeral: true });
                                         } else if (queueData.waitlist.has(i.user.id)) {
                                             queueData.waitlist.delete(i.user.id);
                                             checkQueue(queueData);
-                                            updateStatus(queueData, queueData.status);
                                             await i.reply({ content: 'You have been removed from the waitlist.', ephemeral: true });
                                         } else {
                                             await i.reply({ content: 'You are not in the queue.', ephemeral: true });
@@ -625,9 +623,8 @@ module.exports = {
                             queueData.guestCount = queueData.guestCount - queueData.mainQueue.get(userToKick.id).guests;
                             queueData.mainQueue.delete(userToKick.id);
                             queueData.userReadyUpTimes.delete(userToKick.id);
-                            checkQueue(queueData);
                             waitlistToQueue(queueData);
-                            updateStatus(queueData, queueData.status, queueData.startTime);
+                            checkQueue(queueData);
                             await interaction.reply({ content: `${userToKick} has been kicked from the main queue.`, ephemeral: true });
                         } else {
 
@@ -640,7 +637,6 @@ module.exports = {
                         } else if (queueData.status === 'readying') {
                             queueData.waitlist.delete(userToKick.id);
                             checkQueue(queueData);
-                            updateStatus(queueData, queueData.status, queueData.startTime);
                             await interaction.reply({ content: `${userToKick} has been kicked from the waitlist.`, ephemeral: true });
                         } else {
                             
