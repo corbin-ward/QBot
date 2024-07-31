@@ -1,7 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
-const mongoose = require('mongoose');
-const templatesModel = require('../../models/templates');
-const serverTemplatesModel = require('../../models/servertemplates');
+const { getFirestore, collection, addDoc, doc, deleteDoc, getDocs, query, where, getDoc } = require('firebase/firestore');
+const { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -69,17 +68,25 @@ module.exports = {
         // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
-
+        const db = getFirestore();
+    
         switch (subcommand) {
             case 'delete': {
                 try {
                     const userId = interaction.user.id;
-                    const templates = await templatesModel.find({ creatorId: userId });
-
-                    const choices = templates.map(template => ({
-                        name: `${template.name} by ${template.creatorUsername}`,
-                        value: template._id.toString()
-                    }));
+                    const templatesCol = collection(db, 'templates');
+                    const q = query(templatesCol, where('creatorId', '==', userId));
+                    const querySnapshot = await getDocs(q);
+    
+                    const choices = [];
+                    querySnapshot.forEach(doc => {
+                        const template = doc.data();
+                        choices.push({
+                            name: `${template.name} by ${template.creatorUsername}`,
+                            value: doc.id
+                        });
+                    });
+    
                     const filtered = choices.filter(choice => 
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
@@ -94,14 +101,18 @@ module.exports = {
             case 'load': {
                 try {
                     const serverId = interaction.guild.id;
-                    const templates = await templatesModel.find();
-                    const serverTemplates = await serverTemplatesModel.find({ serverId: serverId });
-
-                    const loadedTemplateIds = serverTemplates.map(st => st.templateId.toString());
-                    const choices = templates.map(template => ({
-                        name: `${loadedTemplateIds.includes(template._id.toString()) ? ' ✅' : '🚫'} - ${template.name} by ${template.creatorUsername}`,
-                        value: template._id.toString()
+                    const templatesCol = collection(db, 'templates');
+                    const serverTemplatesCol = collection(db, 'serverTemplates');
+                    const serverTemplatesQuery = query(serverTemplatesCol, where('serverId', '==', serverId));
+                    const serverTemplatesSnapshot = await getDocs(serverTemplatesQuery);
+                    const loadedTemplateIds = serverTemplatesSnapshot.docs.map(doc => doc.data().templateId);
+    
+                    const querySnapshot = await getDocs(templatesCol);
+                    const choices = querySnapshot.docs.map(doc => ({
+                        name: `${loadedTemplateIds.includes(doc.id) ? '✅' : '🚫'} - ${doc.data().name} by ${doc.data().creatorUsername}`,
+                        value: doc.id
                     }));
+    
                     const filtered = choices.filter(choice => 
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
@@ -116,12 +127,23 @@ module.exports = {
             case 'remove': {
                 try {
                     const serverId = interaction.guild.id;
-                    const serverTemplates = await serverTemplatesModel.find({ serverId: serverId }).populate('templateId');
+                    const serverTemplatesCol = collection(db, 'serverTemplates');
+                    const q = query(serverTemplatesCol, where('serverId', '==', serverId));
+                    const querySnapshot = await getDocs(q);
 
-                    const choices = serverTemplates.map(serverTemplate => ({
-                        name: `✅ ${serverTemplate.templateId.name} by ${serverTemplate.templateId.creatorUsername}`,
-                        value: serverTemplate.templateId._id.toString()
-                    }));
+                    const choices = [];
+                    for (const docSnapshot of querySnapshot.docs) {
+                        const serverTemplate = docSnapshot.data();
+                        const templateDocRef = doc(db, 'templates', serverTemplate.templateId); // Correct use of doc
+                        const templateDoc = await getDoc(templateDocRef);
+                        if (templateDoc.exists()) {
+                            choices.push({
+                                name: `✅ ${templateDoc.data().name} by ${templateDoc.data().creatorUsername}`,
+                                value: serverTemplate.templateId
+                            });
+                        }
+                    }
+
                     const filtered = choices.filter(choice => 
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
@@ -133,92 +155,85 @@ module.exports = {
                 }
                 break;
             }
-            default: {
+            default:
                 await interaction.respond([]);
                 break;
-            }
         }
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
+        const db = getFirestore();
+        const storage = getStorage();
 
         switch (subcommand) {
             case 'create': {
-                const creatorId = interaction.user.id;
-                const creatorUsername = interaction.user.username;
                 const name = interaction.options.getString('name');
                 const icon = interaction.options.getAttachment('icon');
-
-                // Validate icon
-                const validTypes = ['image/png', 'image/jpeg'];
-                if (!validTypes.includes(icon.contentType)) {
-                    return interaction.reply({ content: 'Invalid icon type. Please upload a PNG or JPEG image.', ephemeral: true });
-                }
-
-                // Get icon url
-                const iconUrl = icon.url;
-
                 const queueSpots = interaction.options.getInteger('queue-spots');
-                // Validate queue spots
-                if (queueSpots < 1) {
-                    return interaction.reply({ content: 'Please input a valid number of main queue spots (at least 1).', ephemeral: true });
-                } else if (queueSpots > 100) {
-                    return interaction.reply({ content: 'Please input a valid number of main queue spots (at most 100).', ephemeral: true });
-                }
-
                 const waitlistSpots = interaction.options.getInteger('waitlist-spots');
+                const iconRef = ref(storage, `icons/${icon.id}`);
 
-                // Validate waitlist spots
-                if (waitlistSpots < 0) {
-                    return interaction.reply({ content: 'Please input a valid number of waitlist spots (at least 0).', ephemeral: true });
-                } else if (waitlistSpots > 50) {
-                    return interaction.reply({ content: 'Please input a valid number of waitlist spots (at most 50).', ephemeral: true });
+                // Validate input
+                if (queueSpots < 1 || waitlistSpots < 0 || !['image/png', 'image/jpeg'].includes(icon.contentType)) {
+                    return interaction.reply({
+                        content: 'Invalid input data. Ensure all fields are correctly filled and the image is in PNG or JPEG format.',
+                        ephemeral: true
+                    });
                 }
+
+                // Upload icon to Firebase Storage
+                const iconBuffer = Buffer.from(await (await fetch(icon.url)).arrayBuffer());
+                const metadata = {
+                    contentType: icon.contentType,
+                };
 
                 try {
-                    const newTemplate = await templatesModel.create({
-                        creatorId: creatorId,
-                        creatorUsername: creatorUsername,
-                        name: name,
-                        iconUrl: iconUrl,
-                        queueSpots: queueSpots,
-                        waitlistSpots: waitlistSpots
+                    await uploadBytes(iconRef, iconBuffer, metadata);
+                    const iconUrl = await getDownloadURL(iconRef);
+
+                    // Create a new document in Firestore
+                    const docRef = await addDoc(collection(db, 'templates'), {
+                        creatorId: interaction.user.id,
+                        creatorUsername: interaction.user.username,
+                        name,
+                        iconUrl,
+                        queueSpots,
+                        waitlistSpots,
                     });
-    
-                    interaction.reply({ content: `Template created successfully!\n\nTemplate ID: ${newTemplate._id}`, ephemeral: true });
+
+                    interaction.reply({ content: `Template created successfully with ID: ${docRef.id}`, ephemeral: true });
                 } catch (error) {
                     console.error('Error creating template:', error);
-                    interaction.reply({ content: 'An error occurred while trying to create the template. Please try again later.', ephemeral: true });
+                    interaction.reply({ content: 'Failed to create template. Please try again.', ephemeral: true });
                 }
                 break;
             }
             case 'delete': {
                 const deleteTemplateId = interaction.options.getString('template-id');
+                const templateDocRef = doc(db, 'templates', deleteTemplateId);
 
-                // Validate the template ID
-                if (!mongoose.Types.ObjectId.isValid(deleteTemplateId)) {
-                    return interaction.reply({ content: 'Invalid template ID. Please provide a valid ID.', ephemeral: true });
-                }
-                
                 try {
-                    const template = await templatesModel.findById(deleteTemplateId);
-
-                    // Check if template exists
-                    if (!template) {
+                    // Check if the user is the creator of the template
+                    const templateDoc = await getDoc(templateDocRef);
+                    if (!templateDoc.exists()) {
                         return interaction.reply({ content: 'Template not found. Please check the ID and try again.', ephemeral: true });
                     }
 
-                    // Check if the user is the creator of the template
-                    if (template.creatorId !== interaction.user.id) {
-                        return interaction.reply({ content: 'Only the author is this template is authorized to delete it.', ephemeral: true });
+                    if (templateDoc.data().creatorId !== interaction.user.id) {
+                        return interaction.reply({ content: 'Only the author of this template is authorized to delete it.', ephemeral: true });
                     }
 
-                    // Delete the template
-                    await templatesModel.deleteOne({ _id: deleteTemplateId });
+                    // Retrieve the image reference and delete the image from storage
+                    const iconUrl = templateDoc.data().iconUrl;
+                    const iconRef = ref(storage, iconUrl);
 
-                    // Remove the template from all servers
-                    await serverTemplatesModel.deleteMany({ templateId: deleteTemplateId });
+                    await deleteObject(iconRef).catch(error => {
+                        console.error('Error deleting image from storage:', error);
+                        throw new Error('Failed to delete image associated with the template.');
+                    });
 
+                    // Delete the template document
+                    await deleteDoc(templateDocRef);
                     interaction.reply({ content: 'Template deleted successfully!', ephemeral: true });
                 } catch (error) {
                     console.error('Error deleting template:', error);
@@ -228,30 +243,24 @@ module.exports = {
             }
             case 'load': {
                 const loadTemplateId = interaction.options.getString('template-id');
-
-                // Validate the template ID
-                if (!mongoose.Types.ObjectId.isValid(loadTemplateId)) {
-                    return interaction.reply({ content: 'Invalid template ID. Please provide a valid ID.', ephemeral: true });
-                }
+                const serverId = interaction.guild.id;
+                const serverTemplateCol = collection(db, 'serverTemplates');
+                const templateDocRef = doc(db, 'templates', loadTemplateId);
 
                 try {
-                    const template = await templatesModel.findById(loadTemplateId);
-
-                    // Check if template exists
-                    if (!template) {
+                    const templateDoc = await getDoc(templateDocRef);
+                    if (!templateDoc.exists()) {
                         return interaction.reply({ content: 'Template not found. Please check the ID and try again.', ephemeral: true });
                     }
 
-                    const serverId = interaction.guild.id;
+                    const q = query(serverTemplateCol, where('serverId', '==', serverId), where('templateId', '==', loadTemplateId));
+                    const querySnapshot = await getDocs(q);
 
-                    // Check if the template is already loaded in the server
-                    const existingEntry = await serverTemplatesModel.findOne({ serverId: serverId, templateId: loadTemplateId });
-                    if (existingEntry) {
+                    if (!querySnapshot.empty) {
                         return interaction.reply({ content: 'This template is already loaded in this server.', ephemeral: true });
                     }
 
-                    // Load the template into the server
-                    await serverTemplatesModel.create({
+                    await addDoc(serverTemplateCol, {
                         serverId: serverId,
                         templateId: loadTemplateId
                     });
@@ -265,20 +274,20 @@ module.exports = {
             }
             case 'remove': {
                 const removeTemplateId = interaction.options.getString('template-id');
-
-                // Validate the template ID
-                if (!mongoose.Types.ObjectId.isValid(removeTemplateId)) {
-                    return interaction.reply({ content: 'Invalid template ID. Please provide a valid ID.', ephemeral: true });
-                }
-
                 const serverId = interaction.guild.id;
+                const serverTemplateCol = collection(db, 'serverTemplates');
 
                 try {
-                    const result = await serverTemplatesModel.deleteOne({ serverId: serverId, templateId: removeTemplateId });
+                    const q = query(serverTemplateCol, where('serverId', '==', serverId), where('templateId', '==', removeTemplateId));
+                    const querySnapshot = await getDocs(q);
 
-                    if (result.deletedCount === 0) {
+                    if (querySnapshot.empty) {
                         return interaction.reply({ content: 'Template not found in this server.', ephemeral: true });
                     }
+
+                    querySnapshot.forEach(async (doc) => {
+                        await deleteDoc(doc.ref);
+                    });
 
                     interaction.reply({ content: `Template with ID ${removeTemplateId} removed successfully from this server!`, ephemeral: true });
                 } catch (error) {

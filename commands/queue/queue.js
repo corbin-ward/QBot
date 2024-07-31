@@ -1,9 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, Collection } = require('discord.js');
 const { timezones } = require('../../utils/timezones');
 const moment = require('moment-timezone');
-const mongoose = require('mongoose');
-const templatesModel = require('../../models/templates');
-const serverTemplatesModel = require('../../models/servertemplates');
+const { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where } = require('firebase/firestore');
+const db = getFirestore();
 
 const maxGuests = 1;
 const timeToReadyUp = 1; // Time in minutes to ready up
@@ -257,19 +256,30 @@ module.exports = {
             case 'new': {
                 try {
                     const serverId = interaction.guild.id;
-                    const serverTemplates = await serverTemplatesModel.find({ serverId: serverId }).populate('templateId');
+                    const serverTemplatesCol = collection(db, 'serverTemplates');
+                    const q = query(serverTemplatesCol, where('serverId', '==', serverId));
+                    const querySnapshot = await getDocs(q);
 
-                    const choices = serverTemplates.map(serverTemplate => ({
-                        name: `${serverTemplate.templateId.name} by ${serverTemplate.templateId.creatorUsername}`,
-                        value: serverTemplate.templateId._id.toString()
-                    }));
+                    const choices = [];
+                    for (const docSnapshot of querySnapshot.docs) {
+                        const serverTemplate = docSnapshot.data();
+                        const templateDocRef = doc(db, 'templates', serverTemplate.templateId); // Correct use of doc
+                        const templateDoc = await getDoc(templateDocRef);
+                        if (templateDoc.exists()) {
+                            choices.push({
+                                name: `${templateDoc.data().name} by ${templateDoc.data().creatorUsername}`,
+                                value: serverTemplate.templateId
+                            });
+                        }
+                    }
+
                     const filtered = choices.filter(choice => 
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     );
                     await interaction.respond(filtered);
                 } catch (error) {
-                    console.error('Error fetching templates for new queue:', error);
+                    console.error('Error fetching templates for template new autocomplete:', error);
                     await interaction.respond([]);
                 }
                 break;
@@ -344,31 +354,29 @@ module.exports = {
                     if (subcommand === 'new') {
                         const templateId = interaction.options.getString('template-id');
                         const serverId = interaction.guild.id;
-
-                        // Validate the template ID
-                        if (!mongoose.Types.ObjectId.isValid(templateId)) {
-                            return interaction.reply({ content: 'Invalid template ID. Please provide a valid ID.', ephemeral: true });
-                        }
-
+            
+                        // Firestore document references
+                        const templateDocRef = doc(db, 'templates', templateId);
+                        const serverTemplateQuery = query(collection(db, 'serverTemplates'), where('serverId', '==', serverId), where('templateId', '==', templateId));
+            
                         try {
-                            const template = await templatesModel.findById(templateId);
-
-                            // Check if template exists
-                            if (!template) {
+                            const templateDoc = await getDoc(templateDocRef);
+                            const serverTemplateSnapshot = await getDocs(serverTemplateQuery);
+            
+                            if (!templateDoc.exists()) {
                                 return interaction.reply({ content: 'Template does not exist. Please check the ID and try again.', ephemeral: true });
                             }
-
-                            const serverTemplate = await serverTemplatesModel.findOne({ serverId: serverId, templateId: templateId });
-
-                            // Check if the template is loaded in the server
-                            if (!serverTemplate) {
+            
+                            if (serverTemplateSnapshot.empty) {
                                 return interaction.reply({ content: 'Template is not loaded in this server. Please load the template first.', ephemeral: true });
                             }
-
-                            queueData.name = template.name;
-                            thumbnailURL = template.iconUrl;
-                            queueData.queueSpots = template.queueSpots;
-                            queueData.waitlistSpots = template.waitlistSpots;
+            
+                            // Assuming template data is stored similar to the Mongoose model
+                            const templateData = templateDoc.data();
+                            queueData.name = templateData.name;
+                            thumbnailURL = templateData.iconUrl;
+                            queueData.queueSpots = templateData.queueSpots;
+                            queueData.waitlistSpots = templateData.waitlistSpots;
                         } catch (error) {
                             console.error('Error fetching template:', error);
                             return interaction.reply({ content: 'An error occurred while fetching the template. Please try again later.', ephemeral: true });

@@ -1,10 +1,24 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
-const { token } = require('./config.json');
+const { token, fbApiKey, fbProjectId, fbSenderId, fbAppId } = require('./config.json');
+const { initializeApp } = require("firebase/app");
 
 // Create a new client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+// Initialize firebase
+const firebaseConfig = {
+    apiKey: fbApiKey,
+    authDomain: `${fbProjectId}.firebaseapp.com`,
+    projectId: fbProjectId,
+    storageBucket: `${fbProjectId}.appspot.com`,
+    messagingSenderId: fbSenderId,
+    appId: fbAppId,
+};
+
+client.firebaseApp = initializeApp(firebaseConfig);
+console.log('Connected to Firebase');
 
 // Initialize activeQueues
 client.activeQueues = new Collection();
