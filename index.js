@@ -1,8 +1,9 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
-const { token, fbApiKey, fbProjectId, fbSenderId, fbAppId } = require('./config.json');
-const { initializeApp } = require("firebase/app");
+const { token, fbApiKey, fbProjectId, fbSenderId, fbAppId } = require('./config/config.json');
+const { initializeApp } = require('firebase/app');
+var admin = require('firebase-admin');
 
 // Create a new client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
@@ -17,8 +18,20 @@ const firebaseConfig = {
     appId: fbAppId,
 };
 
-client.firebaseApp = initializeApp(firebaseConfig);
-console.log('Connected to Firebase');
+// Initialize Firebase Client SDK
+const firebaseApp = initializeApp(firebaseConfig);
+console.log('Firebase Client SDK initialized');
+
+// Firebase Admin SDK Configuration
+var serviceAccount = require("./config/firebase-admin.json");
+
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: `https://(default).firebaseio.com`,
+
+});
+console.log('Firebase Admin SDK initialized');
 
 // Initialize activeQueues
 client.activeQueues = new Collection();
