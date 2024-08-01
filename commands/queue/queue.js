@@ -1,8 +1,7 @@
-const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType, Collection } = require('discord.js');
+const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType } = require('discord.js');
 const { timezones } = require('../../utils/timezones');
 const moment = require('moment-timezone');
-const { getFirestore, collection, doc, getDoc, getDocs, setDoc, deleteDoc, query, where } = require('firebase/firestore');
-const db = getFirestore();
+var admin = require('firebase-admin');
 
 const maxGuests = 1;
 const timeToReadyUp = 1; // Time in minutes to ready up
@@ -251,36 +250,38 @@ module.exports = {
         // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
+        const db = admin.firestore();
 
         switch (subcommand) {
             case 'new': {
                 try {
                     const serverId = interaction.guild.id;
-                    const serverTemplatesCol = collection(db, 'serverTemplates');
-                    const q = query(serverTemplatesCol, where('serverId', '==', serverId));
-                    const querySnapshot = await getDocs(q);
-
-                    const choices = [];
-                    for (const docSnapshot of querySnapshot.docs) {
-                        const serverTemplate = docSnapshot.data();
-                        const templateDocRef = doc(db, 'templates', serverTemplate.templateId); // Correct use of doc
-                        const templateDoc = await getDoc(templateDocRef);
-                        if (templateDoc.exists()) {
-                            choices.push({
-                                name: `${templateDoc.data().name} by ${templateDoc.data().creatorUsername}`,
-                                value: serverTemplate.templateId
-                            });
-                        }
-                    }
-
-                    const filtered = choices.filter(choice => 
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
+                    const templatesRef = db.collection('templates');
+                    const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
+                    const [templatesSnapshot, serverTemplatesSnapshot] = await Promise.all([
+                        templatesRef.get(),
+                        serverTemplatesRef.get()
+                    ]);
+            
+                    const choices = templatesSnapshot.docs.map(doc => {
+                        const template = doc.data();
+                        // Conditionally format the name based on loaded status
+                        return {
+                            name: `${template.name} by ${template.creatorUsername}`,
+                            value: doc.id,
+                        };
+                    });
+            
+                    // Filter by the input and respond with both loaded and not loaded templates
+                    const filtered = choices.filter(choice =>
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
                     );
+            
                     await interaction.respond(filtered);
                 } catch (error) {
-                    console.error('Error fetching templates for template new autocomplete:', error);
-                    await interaction.respond([]);
+                    console.error('Error fetching templates for load autocomplete:', error);
+                    await interaction.respond(['Error fetching templates']);
                 }
                 break;
             }
@@ -292,6 +293,7 @@ module.exports = {
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
+        const db = admin.firestore();
         
         // Define a composite key for active queues using user ID and server ID
         const queueKey = `${interaction.user.id}-${interaction.guild.id}`;
@@ -356,22 +358,22 @@ module.exports = {
                         const serverId = interaction.guild.id;
             
                         // Firestore document references
-                        const templateDocRef = doc(db, 'templates', templateId);
-                        const serverTemplateQuery = query(collection(db, 'serverTemplates'), where('serverId', '==', serverId), where('templateId', '==', templateId));
-            
+                        const templateDocRef = db.collection('templates').doc(templateId);
+                        const serverTemplatesRef = db.collection('serverTemplates');
+                        const serverTemplateQuery = serverTemplatesRef.where('serverId', '==', serverId).where('templateId', '==', templateId);
+
                         try {
-                            const templateDoc = await getDoc(templateDocRef);
-                            const serverTemplateSnapshot = await getDocs(serverTemplateQuery);
-            
-                            if (!templateDoc.exists()) {
+                            const templateDoc = await templateDocRef.get();
+                            const serverTemplateSnapshot = await serverTemplateQuery.get();
+
+                            if (!templateDoc.exists) {
                                 return interaction.reply({ content: 'Template does not exist. Please check the ID and try again.', ephemeral: true });
                             }
-            
+
                             if (serverTemplateSnapshot.empty) {
                                 return interaction.reply({ content: 'Template is not loaded in this server. Please load the template first.', ephemeral: true });
                             }
             
-                            // Assuming template data is stored similar to the Mongoose model
                             const templateData = templateDoc.data();
                             queueData.name = templateData.name;
                             thumbnailURL = templateData.iconUrl;

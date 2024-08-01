@@ -29,6 +29,7 @@ var serviceAccount = require("./config/firebase-admin.json");
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     databaseURL: `https://(default).firebaseio.com`,
+	storageBucket: `${fbProjectId}.appspot.com`
 
 });
 console.log('Firebase Admin SDK initialized');

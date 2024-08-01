@@ -1,6 +1,16 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { getFirestore, collection, addDoc, doc, deleteDoc, getDocs, query, where, getDoc } = require('firebase/firestore');
-const { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } = require('firebase/storage');
+const { getDownloadURL } = require('firebase-admin/storage');
+var admin = require('firebase-admin');
+
+async function fetchIconData(url) {
+    const fetch = (await import('node-fetch')).default;
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error('Failed to fetch icon from Discord');
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+}
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -68,90 +78,95 @@ module.exports = {
         // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
-        const db = getFirestore();
+        const db = admin.firestore();
     
         switch (subcommand) {
             case 'delete': {
                 try {
                     const userId = interaction.user.id;
-                    const templatesCol = collection(db, 'templates');
-                    const q = query(templatesCol, where('creatorId', '==', userId));
-                    const querySnapshot = await getDocs(q);
-    
+                    const templatesRef = db.collection('templates').where('creatorId', '==', userId);
+                    const snapshot = await templatesRef.get();
+
                     const choices = [];
-                    querySnapshot.forEach(doc => {
+                    snapshot.forEach(doc => {
                         const template = doc.data();
                         choices.push({
                             name: `${template.name} by ${template.creatorUsername}`,
                             value: doc.id
                         });
                     });
-    
-                    const filtered = choices.filter(choice => 
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
+
+                    const filtered = choices.filter(choice =>
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
                     );
                     await interaction.respond(filtered);
                 } catch (error) {
                     console.error('Error fetching templates for delete autocomplete:', error);
-                    await interaction.respond([]);
+                    await interaction.respond(['Error fetching templates']);
                 }
                 break;
             }
             case 'load': {
                 try {
                     const serverId = interaction.guild.id;
-                    const templatesCol = collection(db, 'templates');
-                    const serverTemplatesCol = collection(db, 'serverTemplates');
-                    const serverTemplatesQuery = query(serverTemplatesCol, where('serverId', '==', serverId));
-                    const serverTemplatesSnapshot = await getDocs(serverTemplatesQuery);
-                    const loadedTemplateIds = serverTemplatesSnapshot.docs.map(doc => doc.data().templateId);
-    
-                    const querySnapshot = await getDocs(templatesCol);
-                    const choices = querySnapshot.docs.map(doc => ({
-                        name: `${loadedTemplateIds.includes(doc.id) ? '✅' : '🚫'} - ${doc.data().name} by ${doc.data().creatorUsername}`,
-                        value: doc.id
-                    }));
-    
-                    const filtered = choices.filter(choice => 
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
+                    const templatesRef = db.collection('templates');
+                    const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
+                    const [templatesSnapshot, serverTemplatesSnapshot] = await Promise.all([
+                        templatesRef.get(),
+                        serverTemplatesRef.get()
+                    ]);
+            
+                    const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
+                    const choices = templatesSnapshot.docs.map(doc => {
+                        const template = doc.data();
+                        const isLoaded = loadedTemplateIds.has(doc.id);
+                        // Conditionally format the name based on loaded status
+                        return {
+                            name: `${isLoaded ? '✅' : '🚫'} - ${template.name} by ${template.creatorUsername}`,
+                            value: doc.id,
+                        };
+                    });
+            
+                    // Filter by the input and respond with both loaded and not loaded templates
+                    const filtered = choices.filter(choice =>
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
                     );
+            
                     await interaction.respond(filtered);
                 } catch (error) {
                     console.error('Error fetching templates for load autocomplete:', error);
-                    await interaction.respond([]);
+                    await interaction.respond(['Error fetching templates']);
                 }
                 break;
             }
             case 'remove': {
                 try {
                     const serverId = interaction.guild.id;
-                    const serverTemplatesCol = collection(db, 'serverTemplates');
-                    const q = query(serverTemplatesCol, where('serverId', '==', serverId));
-                    const querySnapshot = await getDocs(q);
+                    const templatesRef = db.collection('templates');
+                    const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
+                    const [templatesSnapshot, serverTemplatesSnapshot] = await Promise.all([
+                        templatesRef.get(),
+                        serverTemplatesRef.get()
+                    ]);
 
-                    const choices = [];
-                    for (const docSnapshot of querySnapshot.docs) {
-                        const serverTemplate = docSnapshot.data();
-                        const templateDocRef = doc(db, 'templates', serverTemplate.templateId); // Correct use of doc
-                        const templateDoc = await getDoc(templateDocRef);
-                        if (templateDoc.exists()) {
-                            choices.push({
-                                name: `✅ ${templateDoc.data().name} by ${templateDoc.data().creatorUsername}`,
-                                value: serverTemplate.templateId
-                            });
+                    const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
+                    const filtered = templatesSnapshot.docs.map(doc => {
+                        const template = doc.data();
+                        const isLoaded = loadedTemplateIds.has(doc.id);
+                        if (isLoaded) { // Only include loaded templates
+                            return { name: `✅ - ${template.name} by ${template.creatorUsername}`, value: doc.id };
                         }
-                    }
+                    }).filter(choice => choice && ( // Ensure the choice exists and filter based on name or ID
+                        choice.name.toLowerCase().includes(focusedOption) ||
+                        choice.value.toLowerCase().includes(focusedOption)
+                    ));
 
-                    const filtered = choices.filter(choice => 
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) || 
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
-                    );
                     await interaction.respond(filtered);
                 } catch (error) {
-                    console.error('Error fetching templates for remove autocomplete:', error);
-                    await interaction.respond([]);
+                    console.error('Error fetching templates for remove:', error);
+                    await interaction.respond(['Error fetching templates']);
                 }
                 break;
             }
@@ -162,134 +177,154 @@ module.exports = {
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        const db = getFirestore();
-        const storage = getStorage();
+        const db = admin.firestore();
+        const storage = admin.storage().bucket();
 
         switch (subcommand) {
             case 'create': {
-                const name = interaction.options.getString('name');
-                const icon = interaction.options.getAttachment('icon');
-                const queueSpots = interaction.options.getInteger('queue-spots');
-                const waitlistSpots = interaction.options.getInteger('waitlist-spots');
-                const iconRef = ref(storage, `icons/${icon.id}`);
-
-                // Validate input
-                if (queueSpots < 1 || waitlistSpots < 0 || !['image/png', 'image/jpeg'].includes(icon.contentType)) {
-                    return interaction.reply({
-                        content: 'Invalid input data. Ensure all fields are correctly filled and the image is in PNG or JPEG format.',
-                        ephemeral: true
-                    });
-                }
-
-                // Upload icon to Firebase Storage
-                const iconBuffer = Buffer.from(await (await fetch(icon.url)).arrayBuffer());
-                const metadata = {
-                    contentType: icon.contentType,
-                };
-
                 try {
-                    await uploadBytes(iconRef, iconBuffer, metadata);
-                    const iconUrl = await getDownloadURL(iconRef);
+                    const name = interaction.options.getString('name');
+                    const icon = interaction.options.getAttachment('icon');
+                    const queueSpots = interaction.options.getInteger('queue-spots');
+                    const waitlistSpots = interaction.options.getInteger('waitlist-spots');
+            
+                    if (queueSpots < 1 || waitlistSpots < 0 || !['image/png', 'image/jpeg'].includes(icon.contentType)) {
+                        return interaction.reply({
+                            content: 'Invalid input data. Ensure all fields are correctly filled and the image is in PNG or JPEG format.',
+                            ephemeral: true
+                        });
+                    }
+            
+                    // Manually generate a new ID for the template
+                    const newTemplateId = db.collection('templates').doc().id;
 
-                    // Create a new document in Firestore
-                    const docRef = await addDoc(collection(db, 'templates'), {
+                    const iconRef = storage.file(`icons/${newTemplateId}`);
+                    const buffer = await fetchIconData(icon.url);
+            
+                    await iconRef.save(buffer, {
+                        metadata: {
+                            contentType: icon.contentType,
+                        }
+                    });
+            
+                    const iconUrl = await getDownloadURL(iconRef);
+            
+                    await db.collection('templates').doc(newTemplateId).set({
                         creatorId: interaction.user.id,
                         creatorUsername: interaction.user.username,
                         name,
                         iconUrl,
                         queueSpots,
                         waitlistSpots,
+                        createdAt: admin.firestore.Timestamp.now()
                     });
-
-                    interaction.reply({ content: `Template created successfully with ID: ${docRef.id}`, ephemeral: true });
+            
+                    await interaction.reply({ content: 'Template created successfully!', ephemeral: true });
                 } catch (error) {
-                    console.error('Error creating template:', error);
-                    interaction.reply({ content: 'Failed to create template. Please try again.', ephemeral: true });
+                    console.error('Error during the create process:', error);
+                    await interaction.reply({ content: 'Failed to create template. Please try again.', ephemeral: true });
                 }
                 break;
             }
             case 'delete': {
-                const deleteTemplateId = interaction.options.getString('template-id');
-                const templateDocRef = doc(db, 'templates', deleteTemplateId);
-
                 try {
-                    // Check if the user is the creator of the template
-                    const templateDoc = await getDoc(templateDocRef);
-                    if (!templateDoc.exists()) {
-                        return interaction.reply({ content: 'Template not found. Please check the ID and try again.', ephemeral: true });
+                    const templateId = interaction.options.getString('template-id');
+                    const templateDocRef = db.collection('templates').doc(templateId);
+            
+                    const templateDoc = await templateDocRef.get();
+                    if (!templateDoc.exists) {
+                        await interaction.reply({ content: 'Template not found.', ephemeral: true });
+                        return;
                     }
-
-                    if (templateDoc.data().creatorId !== interaction.user.id) {
-                        return interaction.reply({ content: 'Only the author of this template is authorized to delete it.', ephemeral: true });
+            
+                    const templateData = templateDoc.data();
+            
+                    if (templateData.creatorId !== interaction.user.id) {
+                        await interaction.reply({ content: 'You are not authorized to delete this template.', ephemeral: true });
+                        return;
                     }
-
-                    // Retrieve the image reference and delete the image from storage
-                    const iconUrl = templateDoc.data().iconUrl;
-                    const iconRef = ref(storage, iconUrl);
-
-                    await deleteObject(iconRef).catch(error => {
-                        console.error('Error deleting image from storage:', error);
-                        throw new Error('Failed to delete image associated with the template.');
-                    });
-
+            
+                    // Reference to the image with the same ID
+                    const iconRef = storage.file(`icons/${templateId}`);
+            
+                    // Delete the image
+                    await iconRef.delete();
+            
                     // Delete the template document
-                    await deleteDoc(templateDocRef);
-                    interaction.reply({ content: 'Template deleted successfully!', ephemeral: true });
+                    await templateDocRef.delete();
+            
+                    await interaction.reply({ content: 'Template deleted successfully.', ephemeral: true });
                 } catch (error) {
                     console.error('Error deleting template:', error);
-                    interaction.reply({ content: 'An error occurred while trying to delete the template. Please try again later.', ephemeral: true });
+                    await interaction.reply({ content: 'An error occurred while trying to delete the template. Please try again later.', ephemeral: true });
                 }
                 break;
             }
             case 'load': {
-                const loadTemplateId = interaction.options.getString('template-id');
-                const serverId = interaction.guild.id;
-                const serverTemplateCol = collection(db, 'serverTemplates');
-                const templateDocRef = doc(db, 'templates', loadTemplateId);
-
                 try {
-                    const templateDoc = await getDoc(templateDocRef);
-                    if (!templateDoc.exists()) {
-                        return interaction.reply({ content: 'Template not found. Please check the ID and try again.', ephemeral: true });
+                    const templateId = interaction.options.getString('template-id');
+                    const serverId = interaction.guild.id; // Get the server ID from the guild object of the interaction
+                    const templatesRef = db.collection('templates').doc(templateId);
+                    const serverTemplatesRef = db.collection('serverTemplates');
+            
+                    // Check if the template exists
+                    const templateDoc = await templatesRef.get();
+                    if (!templateDoc.exists) {
+                        await interaction.reply({ content: 'Template does not exist.', ephemeral: true });
+                        return;
                     }
-
-                    const q = query(serverTemplateCol, where('serverId', '==', serverId), where('templateId', '==', loadTemplateId));
-                    const querySnapshot = await getDocs(q);
-
+            
+                    // Check if the template is already loaded in this server
+                    const querySnapshot = await serverTemplatesRef.where('serverId', '==', serverId).where('templateId', '==', templateId).get();
                     if (!querySnapshot.empty) {
-                        return interaction.reply({ content: 'This template is already loaded in this server.', ephemeral: true });
+                        await interaction.reply({ content: 'This template is already loaded in this server.', ephemeral: true });
+                        return;
                     }
-
-                    await addDoc(serverTemplateCol, {
+            
+                    // Add the template to the serverTemplates collection for this server
+                    await serverTemplatesRef.add({
                         serverId: serverId,
-                        templateId: loadTemplateId
+                        templateId: templateId
                     });
-
-                    interaction.reply({ content: `Template with ID ${loadTemplateId} loaded successfully into this server!`, ephemeral: true });
+            
+                    await interaction.reply({ content: `Template ${templateId} loaded successfully into this server!`, ephemeral: true });
                 } catch (error) {
                     console.error('Error loading template:', error);
-                    interaction.reply({ content: 'An error occurred while trying to load the template. Please try again later.', ephemeral: true });
+                    await interaction.reply({ content: 'An error occurred while trying to load the template. Please try again later.', ephemeral: true });
                 }
                 break;
             }
             case 'remove': {
-                const removeTemplateId = interaction.options.getString('template-id');
-                const serverId = interaction.guild.id;
-                const serverTemplateCol = collection(db, 'serverTemplates');
-
                 try {
-                    const q = query(serverTemplateCol, where('serverId', '==', serverId), where('templateId', '==', removeTemplateId));
-                    const querySnapshot = await getDocs(q);
+                    const templateId = interaction.options.getString('template-id');
+                    const serverId = interaction.guild.id; // Assumes the command is used within a guild
 
-                    if (querySnapshot.empty) {
-                        return interaction.reply({ content: 'Template not found in this server.', ephemeral: true });
+                    // Reference to the main templates collection and server-specific templates
+                    const templatesRef = db.collection('templates').doc(templateId);
+                    const serverTemplatesRef = db.collection('serverTemplates')
+                        .where('serverId', '==', serverId)
+                        .where('templateId', '==', templateId);
+
+                    // Check if the template exists globally
+                    const templateDoc = await templatesRef.get();
+                    if (!templateDoc.exists) {
+                        await interaction.reply({ content: 'Template does not exist.', ephemeral: true });
+                        return;
                     }
 
-                    querySnapshot.forEach(async (doc) => {
-                        await deleteDoc(doc.ref);
+                    // Check if the template is loaded in this server
+                    const querySnapshot = await serverTemplatesRef.get();
+                    if (querySnapshot.empty) {
+                        await interaction.reply({ content: 'This template is not loaded in this server.', ephemeral: true });
+                        return;
+                    }
+
+                    // Remove the template from the server
+                    querySnapshot.forEach(doc => {
+                        doc.ref.delete();
                     });
 
-                    interaction.reply({ content: `Template with ID ${removeTemplateId} removed successfully from this server!`, ephemeral: true });
+                    await interaction.reply({ content: `Template ${templateId} removed successfully from this server!`, ephemeral: true });
                 } catch (error) {
                     console.error('Error removing template:', error);
                     interaction.reply({ content: 'An error occurred while trying to remove the template. Please try again later.', ephemeral: true });
