@@ -1,35 +1,24 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { Client, Collection, GatewayIntentBits } = require('discord.js');
-const { token, fbApiKey, fbProjectId, fbSenderId, fbAppId } = require('./config/config.json');
 const { initializeApp } = require('firebase/app');
-var admin = require('firebase-admin');
+const admin = require('firebase-admin');
+const { token } = require('./config/discord.js.json');
+const firebaseConfig = require('./config/firebase.json');
+const serviceAccount = require("./config/firebase-admin.json");
 
 // Create a new client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
-
-// Initialize firebase
-const firebaseConfig = {
-    apiKey: fbApiKey,
-    authDomain: `${fbProjectId}.firebaseapp.com`,
-    projectId: fbProjectId,
-    storageBucket: `${fbProjectId}.appspot.com`,
-    messagingSenderId: fbSenderId,
-    appId: fbAppId,
-};
 
 // Initialize Firebase Client SDK
 const firebaseApp = initializeApp(firebaseConfig);
 console.log('Firebase Client SDK initialized');
 
-// Firebase Admin SDK Configuration
-var serviceAccount = require("./config/firebase-admin.json");
-
 // Initialize Firebase Admin SDK
 admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    databaseURL: `https://(default).firebaseio.com`,
-	storageBucket: `${fbProjectId}.appspot.com`
+    databaseURL: `https://${firebaseConfig.projectId}.firebaseio.com`,
+	storageBucket: firebaseConfig.storageBucket
 
 });
 console.log('Firebase Admin SDK initialized');

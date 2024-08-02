@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getDownloadURL } = require('firebase-admin/storage');
-var admin = require('firebase-admin');
+const admin = require('firebase-admin');
 
 async function fetchIconData(url) {
     const fetch = (await import('node-fetch')).default;

@@ -1,7 +1,7 @@
 const { SlashCommandBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, ComponentType } = require('discord.js');
 const { timezones } = require('../../utils/timezones');
 const moment = require('moment-timezone');
-var admin = require('firebase-admin');
+const admin = require('firebase-admin');
 
 const maxGuests = 1;
 const timeToReadyUp = 1; // Time in minutes to ready up
