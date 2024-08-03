@@ -2,11 +2,11 @@ const { SlashCommandBuilder } = require('discord.js');
 const { getDownloadURL } = require('firebase-admin/storage');
 const admin = require('firebase-admin');
 
-async function fetchIconData(url) {
+async function fetchThumbnailData(url) {
     const fetch = (await import('node-fetch')).default;
     const response = await fetch(url);
     if (!response.ok) {
-        throw new Error('Failed to fetch icon from Discord');
+        throw new Error('Failed to fetch thumbnail from Discord');
     }
     const arrayBuffer = await response.arrayBuffer();
     return Buffer.from(arrayBuffer);
@@ -26,8 +26,8 @@ module.exports = {
                     .setRequired(true)
                 )
                 .addAttachmentOption(option => 
-                    option.setName("icon")
-                    .setDescription('Icon for the queue (Game art)')
+                    option.setName("thumbnail")
+                    .setDescription('Thumbnail for the queue (Game art)')
                     .setRequired(true)
                 )
                 .addIntegerOption(option =>
@@ -184,11 +184,12 @@ module.exports = {
             case 'create': {
                 try {
                     const name = interaction.options.getString('name');
-                    const icon = interaction.options.getAttachment('icon');
-                    const queueSpots = interaction.options.getInteger('queue-spots');
-                    const waitlistSpots = interaction.options.getInteger('waitlist-spots');
+                    const thumbnailAttach = interaction.options.getAttachment('thumbnail');
+                    const mainMax = interaction.options.getInteger('queue-spots');
+                    const waitlistMax = interaction.options.getInteger('waitlist-spots');
             
-                    if (queueSpots < 1 || waitlistSpots < 0 || !['image/png', 'image/jpeg'].includes(icon.contentType)) {
+                    // Verify thumbnail type
+                    if (mainMax < 1 || waitlistMax < 0 || !['image/png', 'image/jpeg'].includes(thumbnailAttach.contentType)) {
                         return interaction.reply({
                             content: 'Invalid input data. Ensure all fields are correctly filled and the image is in PNG or JPEG format.',
                             ephemeral: true
@@ -198,24 +199,25 @@ module.exports = {
                     // Manually generate a new ID for the template
                     const newTemplateId = db.collection('templates').doc().id;
 
-                    const iconRef = storage.file(`icons/${newTemplateId}`);
-                    const buffer = await fetchIconData(icon.url);
-            
-                    await iconRef.save(buffer, {
+                    // Store thumbnail
+                    const thumbnailRef = storage.file(`thumbnails/${newTemplateId}`);
+                    const buffer = await fetchThumbnailData(thumbnailAttach.url);
+                    await thumbnailRef.save(buffer, {
                         metadata: {
-                            contentType: icon.contentType,
+                            contentType: thumbnailAttach.contentType,
                         }
                     });
             
-                    const iconUrl = await getDownloadURL(iconRef);
+                    // Get thumbnail Url
+                    const thumbnail = await getDownloadURL(thumbnailRef);
             
                     await db.collection('templates').doc(newTemplateId).set({
                         creatorId: interaction.user.id,
                         creatorUsername: interaction.user.username,
                         name,
-                        iconUrl,
-                        queueSpots,
-                        waitlistSpots,
+                        thumbnail,
+                        mainMax,
+                        waitlistMax,
                         createdAt: admin.firestore.Timestamp.now()
                     });
             
@@ -245,10 +247,10 @@ module.exports = {
                     }
             
                     // Reference to the image with the same ID
-                    const iconRef = storage.file(`icons/${templateId}`);
+                    const thumbnailRef = storage.file(`thumbnails/${templateId}`);
             
                     // Delete the image
-                    await iconRef.delete();
+                    await thumbnailRef.delete();
             
                     // Delete the template document
                     await templateDocRef.delete();
