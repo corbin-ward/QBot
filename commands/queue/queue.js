@@ -2,31 +2,31 @@ const { SlashCommandBuilder, ComponentType } = require('discord.js');
 const { timezones } = require('../../utils/timezones');
 const moment = require('moment-timezone');
 const admin = require('firebase-admin');
-const Queue = require('../../utils/Queue.js');
+const db = admin.firestore();
+const Queue = require('../../classes/Queue.js');
+require('../../utils/messageUtils.js');
 
 const maxGuests = 1;
 
 // Function to parse the provided time input into a valid time object in the specified timezone
 function parseTime(input, timezone) {
-    const formats = [
-        'h:mm A', // 12-hour with AM/PM
-        'h:mmA',  // 12-hour with AM/PM without space
-        'h A',    // 12-hour with AM/PM, hour only
-        'hA',     // 12-hour with AM/PM, hour only without space
-        'H',      // 24-hour, hour only
-        'H:mm'    // 24-hour
-    ];
-    const now = moment.tz(timezone);
-    let parsedTime = moment.tz(input, formats, true, timezone);
+    // Define possible time formats
+    const formats = ['h:mm A', 'h:mmA', 'h A', 'hA', 'H', 'H:mm'];
 
+    // Attempt to parse the input time with the provided formats
+    let parsedTime = moment.tz(input, formats, timezone);
+
+    // Check if the parsed time is valid
     if (!parsedTime.isValid()) {
-        console.error("Failed to parse time:", input);
-        return null;
+        throw new Error('Invalid time format.');
     }
 
-    // Ensure the parsed time is in the future, adjust only once
-    if (parsedTime.isBefore(now)) {
-        parsedTime.add(1, 'day');
+    // Get current time in the specified timezone
+    const currentTime = moment().tz(timezone);
+
+    // If parsed time is before the current time, add one day
+    if (parsedTime.isBefore(currentTime)) {
+        parsedTime.add(1, 'days');
     }
 
     return parsedTime.unix(); // Return Unix timestamp
@@ -103,7 +103,6 @@ module.exports = {
         // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
-        const db = admin.firestore();
 
         switch (subcommand) {
             case 'new': {
@@ -115,21 +114,18 @@ module.exports = {
                         templatesRef.get(),
                         serverTemplatesRef.get()
                     ]);
-            
-                    const choices = templatesSnapshot.docs.map(doc => {
+
+                    const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
+                    const filtered = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
-                        // Conditionally format the name based on loaded status
-                        return {
-                            name: `${template.name} by ${template.creatorUsername}`,
-                            value: doc.id,
-                        };
-                    });
-            
-                    // Filter by the input and respond with both loaded and not loaded templates
-                    const filtered = choices.filter(choice =>
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
-                    );
+                        const isLoaded = loadedTemplateIds.has(doc.id);
+                        if (isLoaded) { // Only include loaded templates
+                            return { name: `${template.name} by ${template.creatorUsername}`, value: doc.id };
+                        }
+                    }).filter(choice => choice && ( // Ensure the choice exists and filter based on name or ID
+                        choice.name.toLowerCase().includes(focusedOption) ||
+                        choice.value.toLowerCase().includes(focusedOption)
+                    ));
             
                     await interaction.respond(filtered);
                 } catch (error) {
@@ -146,7 +142,6 @@ module.exports = {
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        const db = admin.firestore();
         
         // Define a composite key for active queues using user ID and server ID
         const queueKey = `${interaction.user.id}-${interaction.guild.id}`;
@@ -157,7 +152,10 @@ module.exports = {
                 try {
                     // Check if the user already has an active queue in this server
                     if (interaction.client.activeQueues.has(queueKey)) {
-                        return interaction.reply({ content: 'You already have an active queue in this server. You can create a new one after your current queue starts or is canceled.', ephemeral: true });
+                        return interaction.qReply({
+                            content: 'You may only have one active queue per server.', 
+                            type: 'warning'
+                        });
                     }
 
                     const queueCreator = interaction.user.id;
@@ -169,7 +167,10 @@ module.exports = {
 
                     // Handle invalid time input
                     if (!start) {
-                        return interaction.reply({ content: 'Invalid time input. Please use a valid time format e.g. "11:30 PM".', ephemeral: true });
+                        return interaction.qReply({ 
+                            content: 'Please use a valid time format e.g. "11:30 PM".', 
+                            type: 'warning'
+                        });
                     }
 
                     // Common option
@@ -191,11 +192,17 @@ module.exports = {
                             const serverTemplateSnapshot = await serverTemplateQuery.get();
 
                             if (!templateDoc.exists) {
-                                return interaction.reply({ content: 'Template does not exist. Please check the ID and try again.', ephemeral: true });
+                                return interaction.qReply({ 
+                                    content: 'Template does not exist. Please check the ID and try again.', 
+                                    type: 'warning'
+                                });
                             }
 
                             if (serverTemplateSnapshot.empty) {
-                                return interaction.reply({ content: 'Template is not loaded in this server. Please load the template first.', ephemeral: true });
+                                return interaction.qReply({ content: 
+                                    'Template is not loaded in this server. Please load the template first.', 
+                                    type: 'warning'
+                                });
                             }
             
                             const templateData = templateDoc.data();
@@ -205,7 +212,10 @@ module.exports = {
                             options.waitlistMax = templateData.waitlistMax;
                         } catch (error) {
                             console.error('Error fetching template:', error);
-                            return interaction.reply({ content: 'An error occurred while fetching the template. Please try again later.', ephemeral: true });
+                            return interaction.qReply({ 
+                                content: 'An error occurred while fetching the template. Please try again later.', 
+                                type: 'error' 
+                            });
                         }
                     } else {
                         options.name = interaction.options.getString('name');
@@ -216,18 +226,30 @@ module.exports = {
             
                     // Validate queue spots
                     if (options.mainMax < 1) {
-                        return interaction.reply({ content: 'Please input a valid number of queue spots (at least 1).', ephemeral: true });
+                        return interaction.qReply({ 
+                            content: 'Please input a valid number of queue spots (at least 1).', 
+                            type: 'warning'
+                        });
                     }
                     else if (options.mainMax > 100) {
-                        return interaction.reply({ content: 'Please input a valid number of queue spots (at most 100).', ephemeral: true });
+                        return interaction.qReply({ 
+                            content: 'Please input a valid number of queue spots (at most 100).', 
+                            type: 'warning'
+                        });
                     }
             
                     // Validate waitlist spots
                     if (options.waitlistMax < 0) {
-                        return interaction.reply({ content: 'Please input a valid number of waitlist spots (at least 0).', ephemeral: true });
+                        return interaction.qReply({ 
+                            content: 'Please input a valid number of waitlist spots (at least 0).', 
+                            type: 'warning' 
+                        });
                     }
                     else if (options.waitlistMax > 50) {
-                        return interaction.reply({ content: 'Please input a valid number of waitlist spots (at most 50).', ephemeral: true });
+                        return interaction.qReply({ 
+                            content: 'Please input a valid number of waitlist spots (at most 50).', 
+                            type: 'warning'
+                        });
                     }
             
                     // Initialize new Queue with options and send initial response
@@ -247,67 +269,112 @@ module.exports = {
                         try {
                             if (i.customId === 'join') {
                                 if (queue.main.has(i.user.id)) {
-                                    await i.reply({ content: 'You are already in the queue.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You are already in the queue.', 
+                                        type: 'warning'
+                                    });
                                 }
                                 else if (queue.waitlist.has(i.user.id)) {
-                                    await i.reply({ content: 'You are already in the waitlist.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You are already in the waitlist.', 
+                                        type: 'warning'
+                                    });
                                 }
                                 else if (queue.main.size + queue.numGuests < queue.mainMax) {
-                                    queue.addMain(i.user);
+                                    await queue.addMain(i.user);
                                     await queue.updateResponse();
-                                    await i.reply({ content: 'You have been added to the queue.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You have been added to the queue.', 
+                                        type: 'success'
+                                    });
                                 } else if (queue.waitlist.size < queue.waitlistMax) {
-                                    queue.addWaitlist(i.user);
+                                    await queue.addWaitlist(i.user);
                                     await queue.updateResponse();
-                                    await i.reply({ content: 'You have been added to the waitlist since the queue is full.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You have been added to the waitlist since the queue is full.', 
+                                        type: 'success'
+                                    });
                                 } else {
-                                    await i.reply({ content: 'Both the queue and the waitlist are full.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'Both the queue and the waitlist are full.', 
+                                        type: 'warning'
+                                    });
                                 }
                             }
                             if (i.customId === 'addGuest') {
                                 if (queue.main.has(i.user.id)) {
                                     if (queue.main.get(i.user.id).guests >= maxGuests) {
-                                        await i.reply({ content: `You have already hit the max of ${maxGuests} guest(s).`, ephemeral: true });
+                                        await i.qReply({ 
+                                            content: `You have already hit the max of ${maxGuests} guest(s).`, 
+                                            type: 'warning'
+                                        });
                                     } else if (queue.main.size + queue.numGuests < queue.mainMax) {
-                                        queue.addGuest(i.user);
+                                        await queue.addGuest(i.user);
                                         await queue.updateResponse();
-                                        await i.reply({ content: 'Your guest has been added to the queue.', ephemeral: true });
+                                        await i.qReply({ 
+                                            content: 'Your guest has been added to the queue.', 
+                                            type: 'success'
+                                        });
                                     } else {
-                                        await i.reply({ content: 'The queue is full. Guests may not be added to the waitlist.', ephemeral: true });
+                                        await i.qReply({ 
+                                            content: 'The queue is full. Guests may not be added to the waitlist.', 
+                                            type: 'warning'
+                                        });
                                     }
                                 } else {
-                                    await i.reply({ content: 'You must be in the queue to add a guest.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You must be in the queue to add a guest.', 
+                                        type: 'warning'
+                                    });
                                 }
                             }
                             if (i.customId === 'leave') {
                                 if (queue.main.has(i.user.id)) {
-                                    queue.removeMain(i.user)
-                                    queue.fillMain();
+                                    await queue.removeMain(i.user)
+                                    await queue.fillMain();
                                     await queue.updateResponse();
-                                    await i.reply({ content: 'You have been removed from the queue.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You have been removed from the queue.', 
+                                        type: 'success'
+                                    });
                                 } else if (queue.waitlist.has(i.user.id)) {
-                                    queue.removeWaitlist(i.user);
+                                    await queue.removeWaitlist(i.user);
                                     await queue.updateResponse();
-                                    await i.reply({ content: 'You have been removed from the waitlist.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You have been removed from the waitlist.', 
+                                        type: 'success'
+                                    });
                                 } else {
-                                    await i.reply({ content: 'You are not in the queue.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'You are not in the queue.', 
+                                        type: 'warning'
+                                    });
                                 }
                             }
                             if (i.customId === 'cancel') {
                                 if (i.user.id === queueCreator) {
-                                    queue.cancel();
-                                    // TODO: Disable buttons
+                                    await queue.cancel();
                                     await queue.updateResponse();
-                                    pending.stop(); // Stop the collector when the queue is canceled
-                                    await i.reply({ content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled`, ephemeral: true });
+                                    await pending.stop(); // Stop the collector when the queue is canceled
+                                    await i.qReply({ 
+                                        content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled by ${i.user}`, 
+                                        type: 'info',
+                                        ephemeral: false
+                                    });
                                 } else {
-                                    await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'Only the queue creator can cancel the queue.', 
+                                        type: 'warning'
+                                    });
                                 }
                                 return;
                             }
                         } catch (error) {
                             console.error('Error handling button interaction:', error);
-                            await i.reply({ content: 'An error occurred while processing your request. Please try again later.', ephemeral: true });
+                            await i.qReply({ 
+                                content: 'An error occurred while processing your request. Please try again later.', 
+                                type: 'error'
+                            });
                         }
                     });
             
@@ -317,10 +384,10 @@ module.exports = {
                         if (!interaction.client.activeQueues.has(queueKey)) return;
 
                         // Check for end condition
-                        queue.checkEnd();
+                        await queue.checkEnd();
 
                         try {
-                            queue.ready();
+                            await queue.ready();
                             await queue.updateResponse();
                             
                             // Create readying collector
@@ -337,47 +404,75 @@ module.exports = {
                                 try {
                                     if (i.customId === 'readyUp') {
                                         if (queue.main.has(i.user.id)) {
-                                            queue.readyUp(i.user);
-                                            queue.checkEnd();
+                                            await queue.readyUp(i.user);
+                                            await queue.checkEnd();
                                             await queue.updateResponse();
-                                            await i.reply({ content: `<@${i.user.id}>, you have successfully readied up!`, ephemeral: true });
+                                            await i.qReply({ 
+                                                content: `<@${i.user.id}>, you have successfully readied up!`, 
+                                                type: 'success'
+                                            });
                                         } else {
-                                            await i.reply({ content: 'You are not in the queue.', ephemeral: true });
+                                            await i.qReply({ 
+                                                content: 'You are not in the queue.', 
+                                                type: 'warning'
+                                            });
                                         }
                                     }
                                     if (i.customId === 'leave') {
                                         if (queue.main.get(i.user.id)) {
                                             if (queue.main.get(i.user.id).ready) {
-                                                await i.reply({ content: 'You cannot leave the queue after you have readied up.', ephemeral: true });
+                                                await i.qReply({ 
+                                                    content: 'You cannot leave the queue after you have readied up.', 
+                                                    type: 'warning'
+                                                });
                                             } else {
-                                                queue.removeMain(i.user);
-                                                queue.fillMain();
-                                                queue.checkEnd();
+                                                await queue.removeMain(i.user);
+                                                await queue.fillMain();
+                                                await queue.checkEnd();
                                                 await queue.updateResponse();
-                                                await i.reply({ content: 'You have been removed from the queue.', ephemeral: true });
+                                                await i.qReply({ 
+                                                    content: 'You have been removed from the queue.', 
+                                                    type: 'success'
+                                                });
                                             }
                                         } else if (queue.waitlist.has(i.user.id)) {
-                                            queue.removeWaitlist(i.user);
-                                            queue.checkEnd();
+                                            await queue.removeWaitlist(i.user);
+                                            await queue.checkEnd();
                                             await queue.updateResponse();
-                                            await i.reply({ content: 'You have been removed from the waitlist.', ephemeral: true });
+                                            await i.qReply({ 
+                                                content: 'You have been removed from the waitlist.', 
+                                                type: 'success'
+                                            });
                                         } else {
-                                            await i.reply({ content: 'You are not in the queue or waitlist.', ephemeral: true });
+                                            await i.qReply({ 
+                                                content: 'You are not in the queue or waitlist.', 
+                                                type: 'warning'
+                                            });
                                         }
                                     }
                                     if (i.customId === 'cancel') {
                                         if (i.user.id === queueCreator) {
-                                            queue.cancel();
+                                            await queue.cancel();
                                             await queue.updateResponse();
-                                            readying.stop(); // Stop the collector when the queue is canceled
-                                            await i.reply({ content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled`, ephemeral: true });
+                                            await readying.stop(); // Stop the collector when the queue is canceled
+                                            await i.qReply({ 
+                                                content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled by ${i.user}`, 
+                                                type: 'info',
+                                                ephemeral: false
+                                            });
                                         } else {
-                                            await i.reply({ content: 'Only the queue creator can cancel the queue.', ephemeral: true });
+                                            await i.qReply({ 
+                                                content: 'Only the queue creator can cancel the queue.', 
+                                                type: 'warning'
+                                            });
                                         }
                                     }
                                 } catch (error) {
                                     console.error('Error handling button interaction:', error);
-                                    await i.reply({ content: 'An error occurred while processing your request. Please try again later.', ephemeral: true });
+                                    await i.qReply({ 
+                                        content: 'An error occurred while processing your request. Please try again later.', 
+                                        type: 'error'
+                                    });
                                 }
                             });
                         } catch (error) {
@@ -388,7 +483,10 @@ module.exports = {
                     });
                 } catch (error) {
                     console.error('Error handling the command:', error);
-                    interaction.reply({ content: 'An error occurred while processing your request. Please try again later.', ephemeral: true });
+                    interaction.qReply({ 
+                        content: 'An error occurred while processing your request. Please try again later.', 
+                        type: 'error'
+                    });
                 }
                 break;
             }
@@ -401,27 +499,47 @@ module.exports = {
 
                     // Check if user is trying to kick themselves
                     if (userToKick.id === interaction.user.id) {
-                        await interaction.reply({ content: 'You may not kick yourself from your own queue.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: 'You may not kick yourself from your own queue.', 
+                            type: 'warning'
+                        });
                     } else if (queue.main.has(userToKick.id)) {
-                        queue.removeMain(userToKick)
-                        queue.fillMain();
+                        await queue.removeMain(userToKick)
+                        await queue.fillMain();
                         await queue.updateResponse();
-                        await i.reply({ content: `${userToKick} has been removed from the queue.`, ephemeral: true });
+                        await interaction.qReply({ 
+                            content: `${userToKick} has been removed from ${queue.name} queue for <t:${queue.start}:t>.`, 
+                            type: 'info',
+                            ephemeral: false
+                        });
                     } else if (queue.waitlist.has(userToKick.id)) {
-                        queue.removeWaitlist(userToKick);
+                        await queue.removeWaitlist(userToKick);
                         await queue.updateResponse();
-                        await i.reply({ content: `${userToKick} has been removed from the waitlist.`, ephemeral: true });
+                        await interaction.qReply({ 
+                            content: `${userToKick} has been removed from the waitlist.`, 
+                            type: 'info',
+                            ephemeral: false
+                        });
                     } else {
-                        await interaction.reply({ content: `${userToKick} is not in the queue or waitlist.`, ephemeral: true });
+                        await interaction.qReply({ 
+                            content: `${userToKick} is not in the queue or waitlist.`, 
+                            type: 'warning'
+                        });
                     }
 
                 } else {
-                    await interaction.reply({ content: 'You do not have an active queue to kick users from.', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: 'You do not have an active queue to kick users from.', 
+                        type: 'warning'
+                    });
                 }
                 break;
             }
             default: {
-                interaction.reply({ content: 'Unknown subcommand', ephemeral: true });
+                await interaction.qReply({ 
+                    content: 'Unknown subcommand', 
+                    type: 'warning'
+                });
                 break;
             }
         }

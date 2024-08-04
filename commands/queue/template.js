@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getDownloadURL } = require('firebase-admin/storage');
 const admin = require('firebase-admin');
+const db = admin.firestore();
+require('../../utils/messageUtils.js');
 
 async function fetchThumbnailData(url) {
     const fetch = (await import('node-fetch')).default;
@@ -78,7 +80,6 @@ module.exports = {
         // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
-        const db = admin.firestore();
     
         switch (subcommand) {
             case 'delete': {
@@ -91,14 +92,14 @@ module.exports = {
                     snapshot.forEach(doc => {
                         const template = doc.data();
                         choices.push({
-                            name: `${template.name} by ${template.creatorUsername}`,
+                            name: `${template.name}`,
                             value: doc.id
                         });
                     });
 
                     const filtered = choices.filter(choice =>
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
+                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     );
                     await interaction.respond(filtered);
                 } catch (error) {
@@ -131,7 +132,7 @@ module.exports = {
                     // Filter by the input and respond with both loaded and not loaded templates
                     const filtered = choices.filter(choice =>
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase())
+                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     );
             
                     await interaction.respond(filtered);
@@ -159,8 +160,8 @@ module.exports = {
                             return { name: `✅ - ${template.name} by ${template.creatorUsername}`, value: doc.id };
                         }
                     }).filter(choice => choice && ( // Ensure the choice exists and filter based on name or ID
-                        choice.name.toLowerCase().includes(focusedOption) ||
-                        choice.value.toLowerCase().includes(focusedOption)
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     ));
 
                     await interaction.respond(filtered);
@@ -177,7 +178,6 @@ module.exports = {
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        const db = admin.firestore();
         const storage = admin.storage().bucket();
 
         switch (subcommand) {
@@ -190,9 +190,9 @@ module.exports = {
             
                     // Verify thumbnail type
                     if (mainMax < 1 || waitlistMax < 0 || !['image/png', 'image/jpeg'].includes(thumbnailAttach.contentType)) {
-                        return interaction.reply({
+                        return interaction.qReply({
                             content: 'Invalid input data. Ensure all fields are correctly filled and the image is in PNG or JPEG format.',
-                            ephemeral: true
+                            type: 'warning'
                         });
                     }
             
@@ -221,10 +221,16 @@ module.exports = {
                         createdAt: admin.firestore.Timestamp.now()
                     });
             
-                    await interaction.reply({ content: 'Template created successfully!', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: `${name} created successfully!`, 
+                        type: 'success'
+                    });
                 } catch (error) {
                     console.error('Error during the create process:', error);
-                    await interaction.reply({ content: 'Failed to create template. Please try again.', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: 'Failed to create template. Please try again.', 
+                        type: 'error'
+                    });
                 }
                 break;
             }
@@ -235,14 +241,20 @@ module.exports = {
             
                     const templateDoc = await templateDocRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.reply({ content: 'Template not found.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: 'Template not found.', 
+                            type: 'warning'
+                        });
                         return;
                     }
             
                     const templateData = templateDoc.data();
             
                     if (templateData.creatorId !== interaction.user.id) {
-                        await interaction.reply({ content: 'You are not authorized to delete this template.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: 'You are not authorized to delete this template.', 
+                            type: 'warning'
+                        });
                         return;
                     }
             
@@ -255,10 +267,16 @@ module.exports = {
                     // Delete the template document
                     await templateDocRef.delete();
             
-                    await interaction.reply({ content: 'Template deleted successfully.', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: `${templateData.name} deleted successfully.`, 
+                        type: 'success'
+                    });
                 } catch (error) {
                     console.error('Error deleting template:', error);
-                    await interaction.reply({ content: 'An error occurred while trying to delete the template. Please try again later.', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: 'An error occurred while trying to delete the template. Please try again later.', 
+                        type: 'error'
+                    });
                 }
                 break;
             }
@@ -272,14 +290,22 @@ module.exports = {
                     // Check if the template exists
                     const templateDoc = await templatesRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.reply({ content: 'Template does not exist.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: 'Template does not exist.', 
+                            type: 'warning'
+                        });
                         return;
                     }
             
+                    const templateData = templateDoc.data();
+
                     // Check if the template is already loaded in this server
                     const querySnapshot = await serverTemplatesRef.where('serverId', '==', serverId).where('templateId', '==', templateId).get();
                     if (!querySnapshot.empty) {
-                        await interaction.reply({ content: 'This template is already loaded in this server.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: `${templateData.name} is already loaded into this server.`, 
+                            type: 'warning'
+                        });
                         return;
                     }
             
@@ -289,10 +315,17 @@ module.exports = {
                         templateId: templateId
                     });
             
-                    await interaction.reply({ content: `Template ${templateId} loaded successfully into this server!`, ephemeral: true });
+                    await interaction.qReply({ 
+                        content: `${templateData.name} was loaded into this server by ${interaction.user}.`, 
+                        type: 'info',
+                        ephemeral: false 
+                    });
                 } catch (error) {
                     console.error('Error loading template:', error);
-                    await interaction.reply({ content: 'An error occurred while trying to load the template. Please try again later.', ephemeral: true });
+                    await interaction.qReply({ 
+                        content: 'An error occurred while trying to load the template. Please try again later.', 
+                        type: 'error'
+                    });
                 }
                 break;
             }
@@ -310,14 +343,22 @@ module.exports = {
                     // Check if the template exists globally
                     const templateDoc = await templatesRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.reply({ content: 'Template does not exist.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: 'Template does not exist.', 
+                            type: 'warning'
+                        });
                         return;
                     }
+
+                    const templateData = templateDoc.data();
 
                     // Check if the template is loaded in this server
                     const querySnapshot = await serverTemplatesRef.get();
                     if (querySnapshot.empty) {
-                        await interaction.reply({ content: 'This template is not loaded in this server.', ephemeral: true });
+                        await interaction.qReply({ 
+                            content: `${templateData.name} is not loaded into this server.`, 
+                            type: 'warning'
+                        });
                         return;
                     }
 
@@ -326,15 +367,25 @@ module.exports = {
                         doc.ref.delete();
                     });
 
-                    await interaction.reply({ content: `Template ${templateId} removed successfully from this server!`, ephemeral: true });
+                    await interaction.qReply({ 
+                        content: `${templateData.name} was removed from this server by ${interaction.user}.`, 
+                        type: 'info',
+                        ephemeral: false 
+                    });
                 } catch (error) {
                     console.error('Error removing template:', error);
-                    interaction.reply({ content: 'An error occurred while trying to remove the template. Please try again later.', ephemeral: true });
+                    interaction.qReply({ 
+                        content: 'An error occurred while trying to remove the template. Please try again later.', 
+                        type: 'error',
+                    });
                 }
                 break;
             }
             default: {
-                interaction.reply({ content: 'Unknown subcommand', ephemeral: true });
+                interaction.qReply({ 
+                    content: 'Unknown subcommand', 
+                    type: 'warning',
+                });
                 break;
             }
         }

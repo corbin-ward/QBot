@@ -1,6 +1,4 @@
 const { EmbedBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
-const moment = require('moment-timezone');
-const admin = require('firebase-admin');
 
 // Replace with affected variables later
 const readyUpTime = 1; // Time in minutes to ready up
@@ -13,12 +11,11 @@ class Queue {
         this.response = null;
 
         // Permanent Attributes
-        this.name = options.name || 'Unknown Queue';
-        // TODO: Fix fallback start time
-        this.start = options.start || Date.now() + 3_600_000;
-        this.thumbnail = options.thumbnail || 'https://i.imgur.com/j1LmKzM.png' ;
-        this.mainMax = options.mainMax || 1;
-        this.waitlistMax = options.waitlistMax || 0;
+        this.name = options.name;
+        this.start = options.start;
+        this.thumbnail = options.thumbnail;
+        this.mainMax = options.mainMax;
+        this.waitlistMax = options.waitlistMax;
 
         // Queue Containers
         this.main = new Map();
@@ -172,7 +169,11 @@ class Queue {
 
             // Send a DM to the user notifying them to ready up
             this.interaction.client.users.fetch(user.id).then(userObj => {
-                userObj.send(`${this.name} in ${this.interaction.guild.name} is starting!\n\nQueue Link: ${this.response.url}\n\nYou must ready up <t:${endTimestamp}:R> or you'll be removed from the queue.`);
+                userObj.qSend({
+                    content: `${this.name} in ${this.interaction.guild.name} is starting!\n\nQueue Link: ${this.response.url}\n\nYou must ready up <t:${endTimestamp}:R> or you'll be removed from the queue.`,
+                    type: 'info',
+                    thumbnail: this.thumbnail
+                });
             });
 
             setTimeout(async () => {
@@ -183,9 +184,13 @@ class Queue {
                     await this.updateResponse();
 
                     // Send a DM to the user notifying them they have been removed from the queue
-                    this.interaction.client.users.fetch(user.id).then(userObj => {
-                        userObj.send(`You did not ready up in time and have been removed from the queue for ${this.name} in ${this.interaction.guild.name}.`);
-                    });
+                    this.interaction.client.users.fetch(user.id)
+                        .then(userObj => {
+                            userObj.qSend({
+                                content: `You did not ready up in time and have been removed from ${this.name} in ${this.interaction.guild.name}.`,
+                                type: 'warning'
+                            });
+                        });
                 }
             }, readyUpTime * 60 * 1_000);
     }
@@ -248,7 +253,7 @@ class Queue {
 
     async ready() {
         const options = {
-            color: 0x297F48,
+            color: 0x297F48, // Gren
             title: `${this.name} - Readying Up`,
             description: `Started at <t:${this.start}:t>`,
         };
@@ -261,7 +266,7 @@ class Queue {
         // Logic to close the queue
         this.userTimers.clear();
         const options = {
-            color: 0x7D50A0,
+            color: 0x7D50A0, // Purple
             title: `${this.name} - Closed`,
             description: `Closed at <t:${this.start}:t>`,
         };
@@ -275,7 +280,7 @@ class Queue {
         // Logic to cancel the queue
         this.userTimers.clear();
         const options = {
-            color: 0xD83941,
+            color: 0xD83941, // Red
             title: `${this.name} - Cancelled`,
             description: `Was set for <t:${this.start}:t>`,
         };
