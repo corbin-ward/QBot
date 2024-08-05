@@ -137,60 +137,67 @@ class Queue {
             const [userId, user] = this.waitlist.entries().next().value;
             this.waitlist.delete(userId);
             this.main.set(userId, user);
-            setTimer(user);
+            await this.setTimer(user);
         }
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async checkEnd() {
         // Logic to check if the queue should be closed or updated
         if (this.main.size + this.numGuests == 0 && this.waitlist.size === 0) {
             // Queue and waitlist are empty
-            this.cancel();
+            await this.cancel();
         }
         else if (Array.from(this.main.values()).every(user => user.ready)) {
             if (this.main.size + this.numGuests >= this.mainMax) {
                 // Queue is full and all users are ready
-                this.close();
+                await this.close();
             } else if (this.waitlist.size === 0) {
                 // Waitlist is empty and all users are ready
-                this.close();
+                await this.close();
             }
         }
         
     }
 
-    async setTimer(user) {
+    async setTimer(user, initial = false) {
         // Logic to set a timer for user to ready up
         const endTime = Date.now() + readyUpTime * 60 * 1_000;
             const endTimestamp = Math.round(endTime / 1_000);
             this.userTimers.set(user.id, endTime);
+            let timerResponse;
 
             // Send a DM to the user notifying them to ready up
-            this.interaction.client.users.fetch(user.id).then(userObj => {
-                userObj.qSend({
-                    content: `${this.name} in ${this.interaction.guild.name} is starting!\n\nQueue Link: ${this.response.url}\n\nYou must ready up <t:${endTimestamp}:R> or you'll be removed from the queue.`,
-                    type: 'info',
-                    thumbnail: this.thumbnail
-                });
+            await this.interaction.client.users.fetch(user.id).then(async userObj => {
+                if(initial) {
+                    timerResponse = await userObj.qSend({
+                        content: `${this.name} in ${this.interaction.guild.name} is starting!\n\nQueue Link: ${this.response.url}\n\nYou must ready up <t:${endTimestamp}:R> or you'll be removed from the queue.`,
+                        type: 'info',
+                        thumbnail: this.thumbnail
+                    });
+                }
+                else {
+                    timerResponse = await userObj.qSend({
+                        content: `You were moved into the queue for ${this.name} in ${this.interaction.guild.name}!\n\nQueue Link: ${this.response.url}\n\nYou must ready up <t:${endTimestamp}:R> or you'll be removed from the queue.`,
+                        type: 'info',
+                        thumbnail: this.thumbnail
+                    });
+                }
             });
 
             setTimeout(async () => {
                 if (this.userTimers.get(user.id) === endTime) {
-                    this.removeMain(user);
-                    this.fillMain();
-                    this.checkEnd();
+                    await this.removeMain(user);
+                    await this.fillMain();
+                    await this.checkEnd();
                     await this.updateResponse();
 
-                    // Send a DM to the user notifying them they have been removed from the queue
-                    this.interaction.client.users.fetch(user.id)
-                        .then(userObj => {
-                            userObj.qSend({
-                                content: `You did not ready up in time and have been removed from ${this.name} in ${this.interaction.guild.name}.`,
-                                type: 'warning'
-                            });
-                        });
+                    // Update the DM to the user notifying them they have been removed from the queue
+                    await timerResponse.qEdit({
+                        content: `You did not ready up in time for ${this.name} in ${this.interaction.guild.name}\n\nQueue Link: ${this.response.url}\n\nYou were removed from the queue <t:${endTimestamp}:R>.`,
+                        type: 'warning'
+                    });
                 }
             }, readyUpTime * 60 * 1_000);
     }
@@ -204,7 +211,7 @@ class Queue {
             ready: false 
         });
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async addWaitlist(user) {
@@ -216,7 +223,7 @@ class Queue {
             ready: false 
         });
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async addGuest(user) {
@@ -224,7 +231,7 @@ class Queue {
         this.main.get(user.id).guests++;
         this.numGuests++;
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async removeMain(user) {
@@ -233,14 +240,14 @@ class Queue {
         this.userTimers.delete(user.id);
         this.main.delete(user.id);
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async removeWaitlist(user) {
         // Logic for user to be removed from the waitlist
         this.waitlist.delete(user.id);
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async readyUp(user) {
@@ -248,7 +255,7 @@ class Queue {
         this.main.get(user.id).ready = true;
         this.userTimers.delete(user.id);
 
-        this.updateEmbed();
+        await this.updateEmbed();
     }
 
     async ready() {
@@ -258,8 +265,8 @@ class Queue {
             description: `Started at <t:${this.start}:t>`,
         };
 
-        this.updateEmbed(options);
-        this.updateButtons({ buttons: [this.readyUpButton, this.leaveButton, this.cancelButton] });
+        await this.updateEmbed(options);
+        await this.updateButtons({ buttons: [this.readyUpButton, this.leaveButton, this.cancelButton] });
     }
 
     async close() {
@@ -271,9 +278,9 @@ class Queue {
             description: `Closed at <t:${this.start}:t>`,
         };
 
-        this.updateEmbed(options);
-        this.updateButtons({ disable: true });
-        this.interaction.client.activeQueues.delete(this.key);
+        await this.updateEmbed(options);
+        await this.updateButtons({ disable: true });
+        await this.interaction.client.activeQueues.delete(this.key);
     }
 
     async cancel() {
@@ -285,9 +292,9 @@ class Queue {
             description: `Was set for <t:${this.start}:t>`,
         };
 
-        this.updateEmbed(options);
-        this.updateButtons({ disable: true });
-        this.interaction.client.activeQueues.delete(this.key);
+        await this.updateEmbed(options);
+        await this.updateButtons({ disable: true });
+        await this.interaction.client.activeQueues.delete(this.key);
     }
 }
 

@@ -397,7 +397,7 @@ module.exports = {
             
                             // Set timers for original users in the queue
                             queue.main.forEach(user => {
-                                queue.setTimer(user);
+                                queue.setTimer(user, true);
                             });
             
                             readying.on('collect', async (i) => {

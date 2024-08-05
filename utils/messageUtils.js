@@ -1,4 +1,4 @@
-const { ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction, User, TextChannel } = require('discord.js');
+const { ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction, User, TextChannel, Message } = require('discord.js');
 const { EmbedBuilder } = require('discord.js');
 
 const colors = {
@@ -52,6 +52,25 @@ function qSend(options) {
 
 [User, TextChannel].forEach(loc => {
     loc.prototype.qSend = qSend;
+});
+
+function qEdit(options) {
+    const embed = this.embeds[0] ? EmbedBuilder.from(this.embeds[0]) : new EmbedBuilder();
+    const { content, type, thumbnail } = options;
+
+    if(type) {
+        embed
+            .setTitle(titles[type])
+            .setColor(colors[type]);
+    }
+    if(content) embed.setDescription(content);
+    if(thumbnail) embed.setThumbnail(thumbnail);
+
+    return this.edit({ embeds: [embed] });
+}
+
+[Message].forEach(loc => {
+    loc.prototype.qEdit = qEdit;
 });
 
 module.exports = {
