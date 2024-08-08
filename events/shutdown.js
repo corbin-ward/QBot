@@ -14,7 +14,7 @@ async function saveQueueData(client) {
     }
 
     // Save active queues
-    try{
+    try {
         for (let i = 0; i < queues.length; i += batchLimit) {
             // Slice the array to get a chunk
             const chunk = queues.slice(i, i + batchLimit);
@@ -34,21 +34,17 @@ async function saveQueueData(client) {
                                 userTimers.set(userId, { timeLeft, timerResponseId: timerData.timerResponseId, initial: timerData.initial });
                             });
                             batch.set(queueRef, {
-                                // Store channelId and messageID using response
                                 channelId: queue.response.channelId || null,
                                 messageId: queue.response.id || null,
-                                // Store Creator Attributes
                                 creatorId: queue.creator.id,
                                 creatorName: queue.creator.name,
                                 creatorAvatar: queue.creator.avatar,
-                                // Store Permanent Attributes
                                 name: queue.name || 'Unnamed Queue',
                                 start: queue.start || Date.now(),
                                 timezone: queue.timezone,
                                 thumbnail: queue.thumbnail,
                                 mainMax: queue.mainMax || 0,
                                 waitlistMax: queue.waitlistMax || 0,
-                                // Store Queue Containers
                                 main: mapToObject(queue.main),
                                 waitlist: mapToObject(queue.waitlist),
                                 numGuests: queue.numGuests || 0,
@@ -62,10 +58,12 @@ async function saveQueueData(client) {
                     }
                 });
 
-                await batch.commit().catch(error => {
+                try {
+                    await batch.commit();
+                    console.log(`Batch ${Math.floor(i / batchLimit) + 1} saved to Firebase.`);
+                } catch (error) {
                     console.error(`Error committing batch ${Math.floor(i / batchLimit) + 1}:`, error);
-                });
-                console.log(`Batch ${Math.floor(i / batchLimit) + 1} saved to Firebase.`);
+                }
             }
         }
         console.log('Data saved to Firebase before shutdown.');

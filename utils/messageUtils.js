@@ -1,4 +1,13 @@
-const { ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction, User, TextChannel, Message } = require('discord.js');
+const { 
+    ChatInputCommandInteraction, 
+    MessageContextMenuCommandInteraction, 
+    UserContextMenuCommandInteraction, 
+    ButtonInteraction, 
+    ModalSubmitInteraction, 
+    User, 
+    TextChannel, 
+    Message 
+} = require('discord.js');
 const { EmbedBuilder } = require('discord.js');
 
 const colors = {
@@ -12,23 +21,27 @@ const titles = {
     info: 'Info:',       // Purple
     success: 'Success:', // Green
     error: 'Error:',     // Red
-    warning: 'Warning:'  // Blue
+    warning: 'Warning:'  // Yellow
 };
 
 function qReply(options) {
-    if (!options || !options.content) {
-        throw new Error("embedReply: 'content' is required");
-    }
-    const { content, type = 'info', ephemeral = true } = options;
-    const embed = new EmbedBuilder()
-        .setTitle(titles[type])
-        .setDescription(content)
-        .setColor(colors[type]);
+    try {
+        if (!options || !options.content) {
+            throw new Error("qReply: 'content' is required");
+        }
+        const { content, type = 'info', ephemeral = true } = options;
+        const embed = new EmbedBuilder()
+            .setTitle(titles[type])
+            .setDescription(content)
+            .setColor(colors[type]);
 
-    return this.reply({
-        embeds: [embed],
-        ephemeral: ephemeral
-    });
+        return this.reply({
+            embeds: [embed],
+            ephemeral: ephemeral
+        });
+    } catch (error) {
+        console.error('Error in qReply:', error);
+    }
 }
 
 [ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction].forEach(interactionType => {
@@ -36,19 +49,23 @@ function qReply(options) {
 });
 
 function qFollowUp(options) {
-    if (!options || !options.content) {
-        throw new Error("embedReply: 'content' is required");
-    }
-    const { content, type = 'info', ephemeral = true } = options;
-    const embed = new EmbedBuilder()
-        .setTitle(titles[type])
-        .setDescription(content)
-        .setColor(colors[type]);
+    try {
+        if (!options || !options.content) {
+            throw new Error("qFollowUp: 'content' is required");
+        }
+        const { content, type = 'info', ephemeral = true } = options;
+        const embed = new EmbedBuilder()
+            .setTitle(titles[type])
+            .setDescription(content)
+            .setColor(colors[type]);
 
-    return this.followUp({
-        embeds: [embed],
-        ephemeral: ephemeral
-    });
+        return this.followUp({
+            embeds: [embed],
+            ephemeral: ephemeral
+        });
+    } catch (error) {
+        console.error('Error in qFollowUp:', error);
+    }
 }
 
 [ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction].forEach(interactionType => {
@@ -56,18 +73,22 @@ function qFollowUp(options) {
 });
 
 function qSend(options) {
-    if (!options || !options.content) {
-        throw new Error("qSend: 'content' is required");
+    try {
+        if (!options || !options.content) {
+            throw new Error("qSend: 'content' is required");
+        }
+        const { content, type = 'info', thumbnail } = options;
+        const embed = new EmbedBuilder()
+            .setTitle(titles[type])
+            .setDescription(content)
+            .setColor(colors[type]);
+
+        if (thumbnail) embed.setThumbnail(thumbnail);
+
+        return this.send({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error in qSend:', error);
     }
-    const { content, type = 'info', thumbnail } = options;
-    const embed = new EmbedBuilder()
-        .setTitle(titles[type])
-        .setDescription(content)
-        .setColor(colors[type]);
-
-    if(thumbnail) embed.setThumbnail(thumbnail);
-
-    return this.send({ embeds: [embed] });
 }
 
 [User, TextChannel].forEach(loc => {
@@ -75,18 +96,22 @@ function qSend(options) {
 });
 
 function qEdit(options) {
-    const embed = this.embeds[0] ? EmbedBuilder.from(this.embeds[0]) : new EmbedBuilder();
-    const { content, type, thumbnail } = options;
+    try {
+        const embed = this.embeds[0] ? EmbedBuilder.from(this.embeds[0]) : new EmbedBuilder();
+        const { content, type, thumbnail } = options;
 
-    if(type) {
-        embed
-            .setTitle(titles[type])
-            .setColor(colors[type]);
+        if (type) {
+            embed
+                .setTitle(titles[type])
+                .setColor(colors[type]);
+        }
+        if (content) embed.setDescription(content);
+        if (thumbnail) embed.setThumbnail(thumbnail);
+
+        return this.edit({ embeds: [embed] });
+    } catch (error) {
+        console.error('Error in qEdit:', error);
     }
-    if(content) embed.setDescription(content);
-    if(thumbnail) embed.setThumbnail(thumbnail);
-
-    return this.edit({ embeds: [embed] });
 }
 
 [Message].forEach(loc => {

@@ -1,23 +1,40 @@
-const { SlashCommandBuilder } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
+const sharp = require('sharp');
 const { getDownloadURL } = require('firebase-admin/storage');
 const admin = require('firebase-admin');
 const db = admin.firestore();
 require('../../utils/messageUtils.js');
 
 async function fetchThumbnailData(url) {
-    const fetch = (await import('node-fetch')).default;
-    const response = await fetch(url);
-    if (!response.ok) {
-        throw new Error('Failed to fetch thumbnail from Discord');
+    try {
+        const fetch = (await import('node-fetch')).default;
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error('Failed to fetch thumbnail from Discord');
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Downscale the image to a maximum of 256x256 pixels
+        const resizedBuffer = await sharp(buffer)
+            .resize(256, 256, {
+                fit: 'inside',
+                withoutEnlargement: true,
+            })
+            .toBuffer();
+
+        return resizedBuffer;
+    } catch (error) {
+        console.error('Error fetching and processing thumbnail:', error);
+        throw new Error('Thumbnail processing failed.');
     }
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
 }
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('template')
         .setDescription('Create, delete, load, and remove templates.')
+        .setDefaultMemberPermissions(PermissionFlagsBits.ManageChannels)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('create')
@@ -77,39 +94,34 @@ module.exports = {
                 )
         ),
     async autocomplete(interaction) {
-        // handle the autocompletion response
-        const subcommand = interaction.options.getSubcommand();
-        const focusedOption = interaction.options.getFocused();
-    
-        switch (subcommand) {
-            case 'delete': {
-                try {
+        try {
+            // handle the autocompletion response
+            const subcommand = interaction.options.getSubcommand();
+            const focusedOption = interaction.options.getFocused();
+        
+            switch (subcommand) {
+                case 'delete': {
                     const userId = interaction.user.id;
                     const templatesRef = db.collection('templates').where('creatorId', '==', userId);
                     const snapshot = await templatesRef.get();
 
-                    const choices = [];
-                    snapshot.forEach(doc => {
-                        const template = doc.data();
-                        choices.push({
-                            name: `${template.name}`,
-                            value: doc.id
-                        });
-                    });
+                    if (snapshot.empty) {
+                        return interaction.respond([]);
+                    }
+
+                    const choices = snapshot.docs.map(doc => ({
+                        name: doc.data().name,
+                        value: doc.id
+                    }));
 
                     const filtered = choices.filter(choice =>
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     );
                     await interaction.respond(filtered);
-                } catch (error) {
-                    console.error('Error fetching templates for delete autocomplete:', error);
-                    await interaction.respond(['Error fetching templates']);
+                    break;
                 }
-                break;
-            }
-            case 'load': {
-                try {
+                case 'load': {
                     const serverId = interaction.guild.id;
                     const templatesRef = db.collection('templates');
                     const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
@@ -117,33 +129,30 @@ module.exports = {
                         templatesRef.get(),
                         serverTemplatesRef.get()
                     ]);
-            
+
+                    if (templatesSnapshot.empty) {
+                        return interaction.respond([]);
+                    }
+                
                     const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
                     const choices = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
-                        // Conditionally format the name based on loaded status
                         return {
                             name: `${isLoaded ? '✅' : '🚫'} - ${template.name} by ${template.creatorUsername}`,
                             value: doc.id,
                         };
                     });
-            
-                    // Filter by the input and respond with both loaded and not loaded templates
+
                     const filtered = choices.filter(choice =>
                         choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
                         choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     );
-            
+                
                     await interaction.respond(filtered);
-                } catch (error) {
-                    console.error('Error fetching templates for load autocomplete:', error);
-                    await interaction.respond(['Error fetching templates']);
+                    break;
                 }
-                break;
-            }
-            case 'remove': {
-                try {
+                case 'remove': {
                     const serverId = interaction.guild.id;
                     const templatesRef = db.collection('templates');
                     const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
@@ -152,28 +161,32 @@ module.exports = {
                         serverTemplatesRef.get()
                     ]);
 
+                    if (templatesSnapshot.empty) {
+                        return interaction.respond([]);
+                    }
+
                     const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
                     const filtered = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
-                        if (isLoaded) { // Only include loaded templates
-                            return { name: `✅ - ${template.name} by ${template.creatorUsername}`, value: doc.id };
+                        if (isLoaded) {
+                            return {
+                                name: `✅ - ${template.name} by ${template.creatorUsername}`,
+                                value: doc.id
+                            };
                         }
-                    }).filter(choice => choice && ( // Ensure the choice exists and filter based on name or ID
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
-                    ));
+                    }).filter(Boolean); // Filter out undefined values
 
                     await interaction.respond(filtered);
-                } catch (error) {
-                    console.error('Error fetching templates for remove:', error);
-                    await interaction.respond(['Error fetching templates']);
+                    break;
                 }
-                break;
+                default:
+                    await interaction.respond([]);
+                    break;
             }
-            default:
-                await interaction.respond([]);
-                break;
+        } catch (error) {
+            console.error('Error during autocomplete:', error);
+            await interaction.respond(['Error fetching templates']);
         }
     },
     async execute(interaction) {
@@ -208,7 +221,7 @@ module.exports = {
                         }
                     });
             
-                    // Get thumbnail Url
+                    // Get thumbnail URL
                     const thumbnail = await getDownloadURL(thumbnailRef);
             
                     await db.collection('templates').doc(newTemplateId).set({
@@ -241,21 +254,19 @@ module.exports = {
             
                     const templateDoc = await templateDocRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: 'Template not found.', 
                             type: 'warning'
                         });
-                        return;
                     }
             
                     const templateData = templateDoc.data();
             
                     if (templateData.creatorId !== interaction.user.id) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: 'You are not authorized to delete this template.', 
                             type: 'warning'
                         });
-                        return;
                     }
             
                     // Reference to the image with the same ID
@@ -290,11 +301,10 @@ module.exports = {
                     // Check if the template exists
                     const templateDoc = await templatesRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: 'Template does not exist.', 
                             type: 'warning'
                         });
-                        return;
                     }
             
                     const templateData = templateDoc.data();
@@ -302,11 +312,10 @@ module.exports = {
                     // Check if the template is already loaded in this server
                     const querySnapshot = await serverTemplatesRef.where('serverId', '==', serverId).where('templateId', '==', templateId).get();
                     if (!querySnapshot.empty) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: `${templateData.name} is already loaded into this server.`, 
                             type: 'warning'
                         });
-                        return;
                     }
             
                     // Add the template to the serverTemplates collection for this server
@@ -343,11 +352,10 @@ module.exports = {
                     // Check if the template exists globally
                     const templateDoc = await templatesRef.get();
                     if (!templateDoc.exists) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: 'Template does not exist.', 
                             type: 'warning'
                         });
-                        return;
                     }
 
                     const templateData = templateDoc.data();
@@ -355,11 +363,10 @@ module.exports = {
                     // Check if the template is loaded in this server
                     const querySnapshot = await serverTemplatesRef.get();
                     if (querySnapshot.empty) {
-                        await interaction.qReply({ 
+                        return interaction.qReply({ 
                             content: `${templateData.name} is not loaded into this server.`, 
                             type: 'warning'
                         });
-                        return;
                     }
 
                     // Remove the template from the server

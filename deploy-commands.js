@@ -1,5 +1,5 @@
 const { REST, Routes } = require('discord.js');
-const { clientId, guildId, token } = require('./config/discord.js.json');
+const { clientId, devGuildId, token } = require('./config/discord.js.json');
 const fs = require('node:fs');
 const path = require('node:path');
 const { initializeApp } = require('firebase/app');
@@ -20,7 +20,9 @@ admin.initializeApp({
 });
 console.log('Firebase Admin SDK initialized');
 
-const commands = [];
+const globalCommands = [];
+const devCommands = [];
+
 // Grab all the command folders from the commands directory you created earlier
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
@@ -34,7 +36,13 @@ for (const folder of commandFolders) {
 		const filePath = path.join(commandsPath, file);
 		const command = require(filePath);
 		if ('data' in command && 'execute' in command) {
-			commands.push(command.data.toJSON());
+			if (folder === 'dev') {
+				// Push to devCommands if in the dev folder
+				devCommands.push(command.data.toJSON());
+			} else {
+				// Push to globalCommands otherwise
+				globalCommands.push(command.data.toJSON());
+			}
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
@@ -47,15 +55,25 @@ const rest = new REST().setToken(token);
 // and deploy your commands!
 (async () => {
 	try {
-		console.log(`Started refreshing ${commands.length} application (/) commands.`);
+		// Deploy global commands
+		if (globalCommands.length > 0) {
+			console.log(`Started refreshing ${globalCommands.length} global application (/) commands.`);
+			const data = await rest.put(
+				Routes.applicationCommands(clientId),
+				{ body: globalCommands },
+			);
+			console.log(`Successfully reloaded ${data.length} global application (/) commands.`);
+		}
 
-		// The put method is used to fully refresh all commands in the guild with the current set
-		const data = await rest.put(
-			Routes.applicationGuildCommands(clientId, guildId),
-			{ body: commands },
-		);
-
-		console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+		// Deploy dev commands to the specified guild
+		if (devCommands.length > 0) {
+			console.log(`Started refreshing ${devCommands.length} dev application (/) commands for guild ${devGuildId}.`);
+			const data = await rest.put(
+				Routes.applicationGuildCommands(clientId, devGuildId),
+				{ body: devCommands },
+			);
+			console.log(`Successfully reloaded ${data.length} dev application (/) commands for guild ${devGuildId}.`);
+		}
 	} catch (error) {
 		// And of course, make sure you catch and log any errors!
 		console.error(error);

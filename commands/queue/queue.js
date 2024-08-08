@@ -8,29 +8,21 @@ require('../../utils/messageUtils.js');
 
 // Function to parse the provided time input into a valid time object in the specified timezone
 function parseTime(input, timezone) {
-    // Define possible time formats
     const formats = ['h:mm A', 'h:mmA', 'h A', 'hA', 'H', 'H:mm'];
-
-    // Attempt to parse the input time with the provided formats
     let parsedTime = moment.tz(input, formats, timezone);
 
-    // Check if the parsed time is valid
     if (!parsedTime.isValid()) {
         throw new Error('Invalid time format.');
     }
 
-    // Get current time in the specified timezone
     const currentTime = moment().tz(timezone);
-
-    // Set the parsedTime's date to today, in the specified timezone
     parsedTime.date(currentTime.date());
 
-    // If parsed time is before the current time, add one day
     if (parsedTime.isBefore(currentTime)) {
         parsedTime.add(1, 'days');
     }
 
-    return parsedTime.unix(); // Return Unix timestamp
+    return parsedTime.unix(); 
 }
 
 module.exports = {
@@ -101,7 +93,6 @@ module.exports = {
                 )
         ),
     async autocomplete(interaction) {
-        // handle the autocompletion response
         const subcommand = interaction.options.getSubcommand();
         const focusedOption = interaction.options.getFocused();
 
@@ -120,12 +111,12 @@ module.exports = {
                     const filtered = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
-                        if (isLoaded) { // Only include loaded templates
+                        if (isLoaded) { 
                             return { name: `${template.name} by ${template.creatorUsername}`, value: doc.id };
                         }
-                    }).filter(choice => choice && ( // Ensure the choice exists and filter based on name or ID
-                        choice.name.toLowerCase().includes(focusedOption) ||
-                        choice.value.toLowerCase().includes(focusedOption)
+                    }).filter(choice => choice && ( 
+                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
                     ));
             
                     await interaction.respond(filtered);
@@ -143,15 +134,12 @@ module.exports = {
     },
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
-        
-        // Define a composite key for active queues using user ID and server ID
         const queueKey = `${interaction.user.id}-${interaction.guild.id}`;
 
         switch (subcommand) {
             case 'new':
             case 'manual': {
                 try {
-                    // Check if the user already has an active queue in this server
                     if (interaction.client.activeQueues.has(queueKey)) {
                         return interaction.qReply({
                             content: 'You may only have one active queue per server.', 
@@ -159,12 +147,10 @@ module.exports = {
                         });
                     }
 
-                    // Get Start Time
                     const timeInput = interaction.options.getString('time');
                     const timezone = interaction.options.getString('timezone');
                     const start = parseTime(timeInput, timezone);
 
-                    // Handle invalid time input
                     if (!start) {
                         return interaction.qReply({ 
                             content: 'Please use a valid time format e.g. "11:30 PM".', 
@@ -172,7 +158,6 @@ module.exports = {
                         });
                     }
 
-                    // Common option
                     let options = {
                         creator: {
                             id: interaction.user.id,
@@ -187,7 +172,6 @@ module.exports = {
                         const templateId = interaction.options.getString('template-id');
                         const serverId = interaction.guild.id;
             
-                        // Firestore document references
                         const templateDocRef = db.collection('templates').doc(templateId);
                         const serverTemplatesRef = db.collection('serverTemplates');
                         const serverTemplateQuery = serverTemplatesRef.where('serverId', '==', serverId).where('templateId', '==', templateId);
@@ -204,8 +188,8 @@ module.exports = {
                             }
 
                             if (serverTemplateSnapshot.empty) {
-                                return interaction.qReply({ content: 
-                                    'Template is not loaded in this server. Please load the template first.', 
+                                return interaction.qReply({ 
+                                    content: 'Template is not loaded in this server. Please load the template first.', 
                                     type: 'warning'
                                 });
                             }
@@ -229,39 +213,23 @@ module.exports = {
                         options.waitlistMax = interaction.options.getInteger('waitlist-spots');
                     }
             
-                    // Validate queue spots
-                    if (options.mainMax < 1) {
+                    if (options.mainMax < 1 || options.mainMax > 100) {
                         return interaction.qReply({ 
-                            content: 'Please input a valid number of queue spots (at least 1).', 
-                            type: 'warning'
-                        });
-                    }
-                    else if (options.mainMax > 100) {
-                        return interaction.qReply({ 
-                            content: 'Please input a valid number of queue spots (at most 100).', 
+                            content: 'Please input a valid number of queue spots (1-100).', 
                             type: 'warning'
                         });
                     }
             
-                    // Validate waitlist spots
-                    if (options.waitlistMax < 0) {
+                    if (options.waitlistMax < 0 || options.waitlistMax > 50) {
                         return interaction.qReply({ 
-                            content: 'Please input a valid number of waitlist spots (at least 0).', 
+                            content: 'Please input a valid number of waitlist spots (0-50).', 
                             type: 'warning' 
                         });
                     }
-                    else if (options.waitlistMax > 50) {
-                        return interaction.qReply({ 
-                            content: 'Please input a valid number of waitlist spots (at most 50).', 
-                            type: 'warning'
-                        });
-                    }
             
-                    // Initialize new Queue with options and send initial response with collector
                     const queue = new Queue(queueKey, options);
                     await queue.sendResponse(interaction);
 
-                    // Mark the user as having an active queue in this server
                     interaction.client.activeQueues.set(queueKey, queue);
 
                 } catch (error) {
@@ -274,46 +242,51 @@ module.exports = {
                 break;
             }
             case 'kick': {
-                const userToKick = interaction.options.getUser('user');
+                try {
+                    const userToKick = interaction.options.getUser('user');
 
-                // Validate if the command issuer is the queue creator
-                if (interaction.client.activeQueues.has(queueKey)) {
-                    const queue = activeQueues.get(queueKey);
+                    if (interaction.client.activeQueues.has(queueKey)) {
+                        const queue = interaction.client.activeQueues.get(queueKey);
 
-                    // Check if user is trying to kick themselves
-                    if (userToKick.id === interaction.user.id) {
-                        await interaction.qReply({ 
-                            content: 'You may not kick yourself from your own queue.', 
-                            type: 'warning'
-                        });
-                    } else if (queue.main.has(userToKick.id)) {
-                        await queue.removeMain(userToKick)
-                        await queue.fillMain();
-                        await queue.updateResponse();
-                        await interaction.qReply({ 
-                            content: `${userToKick} has been removed from ${queue.name} queue for <t:${queue.start}:t>.`, 
-                            type: 'info',
-                            ephemeral: false
-                        });
-                    } else if (queue.waitlist.has(userToKick.id)) {
-                        await queue.removeWaitlist(userToKick);
-                        await queue.updateResponse();
-                        await interaction.qReply({ 
-                            content: `${userToKick} has been removed from the waitlist.`, 
-                            type: 'info',
-                            ephemeral: false
-                        });
+                        if (userToKick.id === interaction.user.id) {
+                            await interaction.qReply({ 
+                                content: 'You may not kick yourself from your own queue.', 
+                                type: 'warning'
+                            });
+                        } else if (queue.main.has(userToKick.id)) {
+                            await queue.removeMain(userToKick);
+                            await queue.fillMain();
+                            await queue.updateResponse();
+                            await interaction.qReply({ 
+                                content: `${userToKick} has been removed from ${queue.name} queue for <t:${queue.start}:t>.`, 
+                                type: 'info',
+                                ephemeral: false
+                            });
+                        } else if (queue.waitlist.has(userToKick.id)) {
+                            await queue.removeWaitlist(userToKick);
+                            await queue.updateResponse();
+                            await interaction.qReply({ 
+                                content: `${userToKick} has been removed from the waitlist.`, 
+                                type: 'info',
+                                ephemeral: false
+                            });
+                        } else {
+                            await interaction.qReply({ 
+                                content: `${userToKick} is not in the queue or waitlist.`, 
+                                type: 'warning'
+                            });
+                        }
                     } else {
                         await interaction.qReply({ 
-                            content: `${userToKick} is not in the queue or waitlist.`, 
+                            content: 'You do not have an active queue to kick users from.', 
                             type: 'warning'
                         });
                     }
-
-                } else {
-                    await interaction.qReply({ 
-                        content: 'You do not have an active queue to kick users from.', 
-                        type: 'warning'
+                } catch (error) {
+                    console.error('Error handling kick command:', error);
+                    interaction.qReply({ 
+                        content: 'An error occurred while processing your request. Please try again later.', 
+                        type: 'error'
                     });
                 }
                 break;
