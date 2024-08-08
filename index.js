@@ -7,6 +7,8 @@ const { token } = require('./config/discord.js.json');
 const firebaseConfig = require('./config/firebase.json');
 const serviceAccount = require("./config/firebase-admin.json");
 
+const { saveQueueData } = require('./events/shutdown.js');
+
 // Create a new client instance
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
@@ -63,3 +65,27 @@ for (const file of eventFiles) {
 
 // Log in to Discord with your client's token
 client.login(token);
+
+// Handle graceful shutdown
+process.on('SIGTERM', async () => {
+    await saveQueueData(client);
+    process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+    await saveQueueData(client);
+    process.exit(0);
+});
+
+// Handle uncaught exceptions and rejections
+process.on('uncaughtException', async (err) => {
+    console.error('Uncaught Exception:', err);
+    await saveQueueData(client);
+    process.exit(1);
+});
+
+process.on('unhandledRejection', async (reason, promise) => {
+    console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+    await saveQueueData(client);
+    process.exit(1);
+});

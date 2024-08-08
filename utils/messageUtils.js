@@ -35,6 +35,26 @@ function qReply(options) {
     interactionType.prototype.qReply = qReply;
 });
 
+function qFollowUp(options) {
+    if (!options || !options.content) {
+        throw new Error("embedReply: 'content' is required");
+    }
+    const { content, type = 'info', ephemeral = true } = options;
+    const embed = new EmbedBuilder()
+        .setTitle(titles[type])
+        .setDescription(content)
+        .setColor(colors[type]);
+
+    return this.followUp({
+        embeds: [embed],
+        ephemeral: ephemeral
+    });
+}
+
+[ChatInputCommandInteraction, MessageContextMenuCommandInteraction, UserContextMenuCommandInteraction, ButtonInteraction, ModalSubmitInteraction].forEach(interactionType => {
+    interactionType.prototype.qFollowUp = qFollowUp;
+});
+
 function qSend(options) {
     if (!options || !options.content) {
         throw new Error("qSend: 'content' is required");

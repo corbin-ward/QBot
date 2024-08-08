@@ -2,6 +2,23 @@ const { REST, Routes } = require('discord.js');
 const { clientId, guildId, token } = require('./config/discord.js.json');
 const fs = require('node:fs');
 const path = require('node:path');
+const { initializeApp } = require('firebase/app');
+const admin = require('firebase-admin');
+const firebaseConfig = require('./config/firebase.json');
+const serviceAccount = require("./config/firebase-admin.json");
+
+// Initialize Firebase Client SDK
+const firebaseApp = initializeApp(firebaseConfig);
+console.log('Firebase Client SDK initialized');
+
+// Initialize Firebase Admin SDK
+admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+    databaseURL: `https://${firebaseConfig.projectId}.firebaseio.com`,
+	storageBucket: firebaseConfig.storageBucket
+
+});
+console.log('Firebase Admin SDK initialized');
 
 const commands = [];
 // Grab all the command folders from the commands directory you created earlier

@@ -3,11 +3,24 @@ const { Collection, Events } = require('discord.js');
 module.exports = {
 	name: Events.InteractionCreate,
 	async execute(interaction) {
+		if (!interaction.client.loadedData) {
+			return interaction.qReply({
+				content: 'QBot is still loading data, please try again in a moment.',
+				type: 'warning'
+			});
+		}
+
 		if (interaction.isChatInputCommand()) {
 			const command = interaction.client.commands.get(interaction.commandName);
 
 			if (!command) {
 				console.error(`No command matching ${interaction.commandName} was found.`);
+				return;
+			}
+
+			// Check if the command is 'error' and bypass the usual checks
+			if (interaction.commandName === 'error') {
+				await command.execute(interaction);
 				return;
 			}
 			
@@ -28,7 +41,10 @@ module.exports = {
 
 				if (now < expirationTime) {
 					const expiredTimestamp = Math.round(expirationTime / 1_000);
-					return interaction.reply({ content: `Please wait, you are on a cooldown for \`${command.data.name}\`. You can use it again <t:${expiredTimestamp}:R>.`, ephemeral: true });
+					return interaction.qReply({ 
+						content: `Please wait, you are on a cooldown for \`${command.data.name}\`. You can use it again <t:${expiredTimestamp}:R>.`, 
+						type: 'warning' 
+					});
 				}
 			}
 
@@ -40,9 +56,15 @@ module.exports = {
 			} catch (error) {
 				console.error(error);
 				if (interaction.replied || interaction.deferred) {
-					await interaction.followUp({ content: 'There was an error while executing this command!', ephemeral: true });
+					await interaction.qFollowUp({ 
+						content: 'There was an error while executing this command!', 
+						type: 'error'
+					});
 				} else {
-					await interaction.reply({ content: 'There was an error while executing this command!', ephemeral: true });
+					await interaction.qReply({ 
+						content: 'There was an error while executing this command!', 
+						type: 'error' 
+					});
 				}
 			}
 		} else if (interaction.isAutocomplete()) {

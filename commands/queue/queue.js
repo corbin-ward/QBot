@@ -1,12 +1,10 @@
-const { SlashCommandBuilder, ComponentType } = require('discord.js');
+const { SlashCommandBuilder } = require('discord.js');
 const { timezones } = require('../../utils/timezones');
 const moment = require('moment-timezone');
 const admin = require('firebase-admin');
 const db = admin.firestore();
 const Queue = require('../../classes/Queue.js');
 require('../../utils/messageUtils.js');
-
-const maxGuests = 1;
 
 // Function to parse the provided time input into a valid time object in the specified timezone
 function parseTime(input, timezone) {
@@ -23,6 +21,9 @@ function parseTime(input, timezone) {
 
     // Get current time in the specified timezone
     const currentTime = moment().tz(timezone);
+
+    // Set the parsedTime's date to today, in the specified timezone
+    parsedTime.date(currentTime.date());
 
     // If parsed time is before the current time, add one day
     if (parsedTime.isBefore(currentTime)) {
@@ -158,8 +159,6 @@ module.exports = {
                         });
                     }
 
-                    const queueCreator = interaction.user.id;
-
                     // Get Start Time
                     const timeInput = interaction.options.getString('time');
                     const timezone = interaction.options.getString('timezone');
@@ -175,7 +174,13 @@ module.exports = {
 
                     // Common option
                     let options = {
-                        start: start
+                        creator: {
+                            id: interaction.user.id,
+                            name: interaction.user.username,
+                            avatar: interaction.user.displayAvatarURL()
+                        },
+                        start: start,
+                        timezone: timezone
                     };
 
                     if (subcommand === 'new') {
@@ -252,235 +257,13 @@ module.exports = {
                         });
                     }
             
-                    // Initialize new Queue with options and send initial response
-                    const queue = new Queue(queueKey, interaction, options);
-                    await queue.sendResponse();
+                    // Initialize new Queue with options and send initial response with collector
+                    const queue = new Queue(queueKey, options);
+                    await queue.sendResponse(interaction);
 
                     // Mark the user as having an active queue in this server
                     interaction.client.activeQueues.set(queueKey, queue);
-            
-                    // Collector for handling button interactions
-                    const pending = queue.response.createMessageComponentCollector({
-                        componentType: ComponentType.Button,
-                        time: (queue.start - moment().unix()) * 1_000
-                    });
-            
-                    pending.on('collect', async (i) => {
-                        try {
-                            if (i.customId === 'join') {
-                                if (queue.main.has(i.user.id)) {
-                                    await i.qReply({ 
-                                        content: 'You are already in the queue.', 
-                                        type: 'warning'
-                                    });
-                                }
-                                else if (queue.waitlist.has(i.user.id)) {
-                                    await i.qReply({ 
-                                        content: 'You are already in the waitlist.', 
-                                        type: 'warning'
-                                    });
-                                }
-                                else if (queue.main.size + queue.numGuests < queue.mainMax) {
-                                    await queue.addMain(i.user);
-                                    await queue.updateResponse();
-                                    await i.qReply({ 
-                                        content: 'You have been added to the queue.', 
-                                        type: 'success'
-                                    });
-                                } else if (queue.waitlist.size < queue.waitlistMax) {
-                                    await queue.addWaitlist(i.user);
-                                    await queue.updateResponse();
-                                    await i.qReply({ 
-                                        content: 'You have been added to the waitlist since the queue is full.', 
-                                        type: 'success'
-                                    });
-                                } else {
-                                    await i.qReply({ 
-                                        content: 'Both the queue and the waitlist are full.', 
-                                        type: 'warning'
-                                    });
-                                }
-                            }
-                            if (i.customId === 'addGuest') {
-                                if (queue.main.has(i.user.id)) {
-                                    if (queue.main.get(i.user.id).guests >= maxGuests) {
-                                        await i.qReply({ 
-                                            content: `You have already hit the max of ${maxGuests} guest(s).`, 
-                                            type: 'warning'
-                                        });
-                                    } else if (queue.main.size + queue.numGuests < queue.mainMax) {
-                                        await queue.addGuest(i.user);
-                                        await queue.updateResponse();
-                                        await i.qReply({ 
-                                            content: 'Your guest has been added to the queue.', 
-                                            type: 'success'
-                                        });
-                                    } else {
-                                        await i.qReply({ 
-                                            content: 'The queue is full. Guests may not be added to the waitlist.', 
-                                            type: 'warning'
-                                        });
-                                    }
-                                } else {
-                                    await i.qReply({ 
-                                        content: 'You must be in the queue to add a guest.', 
-                                        type: 'warning'
-                                    });
-                                }
-                            }
-                            if (i.customId === 'leave') {
-                                if (queue.main.has(i.user.id)) {
-                                    await queue.removeMain(i.user)
-                                    await queue.fillMain();
-                                    await queue.updateResponse();
-                                    await i.qReply({ 
-                                        content: 'You have been removed from the queue.', 
-                                        type: 'success'
-                                    });
-                                } else if (queue.waitlist.has(i.user.id)) {
-                                    await queue.removeWaitlist(i.user);
-                                    await queue.updateResponse();
-                                    await i.qReply({ 
-                                        content: 'You have been removed from the waitlist.', 
-                                        type: 'success'
-                                    });
-                                } else {
-                                    await i.qReply({ 
-                                        content: 'You are not in the queue.', 
-                                        type: 'warning'
-                                    });
-                                }
-                            }
-                            if (i.customId === 'cancel') {
-                                if (i.user.id === queueCreator) {
-                                    await queue.cancel();
-                                    await queue.updateResponse();
-                                    await pending.stop(); // Stop the collector when the queue is canceled
-                                    await i.qReply({ 
-                                        content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled by ${i.user}`, 
-                                        type: 'info',
-                                        ephemeral: false
-                                    });
-                                } else {
-                                    await i.qReply({ 
-                                        content: 'Only the queue creator can cancel the queue.', 
-                                        type: 'warning'
-                                    });
-                                }
-                                return;
-                            }
-                        } catch (error) {
-                            console.error('Error handling button interaction:', error);
-                            await i.qReply({ 
-                                content: 'An error occurred while processing your request. Please try again later.', 
-                                type: 'error'
-                            });
-                        }
-                    });
-            
-                    // Handle the end of the queue collector
-                    pending.on('end', async () => {
-                        // Return if end condition is met
-                        if (!interaction.client.activeQueues.has(queueKey)) return;
 
-                        // Check for end condition
-                        await queue.checkEnd();
-
-                        try {
-                            await queue.ready();
-                            await queue.updateResponse();
-                            
-                            // Create readying collector
-                            const readying = queue.response.createMessageComponentCollector({
-                                componentType: ComponentType.Button
-                            });
-            
-                            // Set timers for original users in the queue
-                            queue.main.forEach(user => {
-                                queue.setTimer(user, true);
-                            });
-            
-                            readying.on('collect', async (i) => {
-                                try {
-                                    if (i.customId === 'readyUp') {
-                                        if (queue.main.has(i.user.id)) {
-                                            await queue.readyUp(i.user);
-                                            await queue.checkEnd();
-                                            await queue.updateResponse();
-                                            await i.qReply({ 
-                                                content: `<@${i.user.id}>, you have successfully readied up!`, 
-                                                type: 'success'
-                                            });
-                                        } else {
-                                            await i.qReply({ 
-                                                content: 'You are not in the queue.', 
-                                                type: 'warning'
-                                            });
-                                        }
-                                    }
-                                    if (i.customId === 'leave') {
-                                        if (queue.main.get(i.user.id)) {
-                                            if (queue.main.get(i.user.id).ready) {
-                                                await i.qReply({ 
-                                                    content: 'You cannot leave the queue after you have readied up.', 
-                                                    type: 'warning'
-                                                });
-                                            } else {
-                                                await queue.removeMain(i.user);
-                                                await queue.fillMain();
-                                                await queue.checkEnd();
-                                                await queue.updateResponse();
-                                                await i.qReply({ 
-                                                    content: 'You have been removed from the queue.', 
-                                                    type: 'success'
-                                                });
-                                            }
-                                        } else if (queue.waitlist.has(i.user.id)) {
-                                            await queue.removeWaitlist(i.user);
-                                            await queue.checkEnd();
-                                            await queue.updateResponse();
-                                            await i.qReply({ 
-                                                content: 'You have been removed from the waitlist.', 
-                                                type: 'success'
-                                            });
-                                        } else {
-                                            await i.qReply({ 
-                                                content: 'You are not in the queue or waitlist.', 
-                                                type: 'warning'
-                                            });
-                                        }
-                                    }
-                                    if (i.customId === 'cancel') {
-                                        if (i.user.id === queueCreator) {
-                                            await queue.cancel();
-                                            await queue.updateResponse();
-                                            await readying.stop(); // Stop the collector when the queue is canceled
-                                            await i.qReply({ 
-                                                content: `The ${queue.name} queue for <t:${queue.start}:t> has been canceled by ${i.user}`, 
-                                                type: 'info',
-                                                ephemeral: false
-                                            });
-                                        } else {
-                                            await i.qReply({ 
-                                                content: 'Only the queue creator can cancel the queue.', 
-                                                type: 'warning'
-                                            });
-                                        }
-                                    }
-                                } catch (error) {
-                                    console.error('Error handling button interaction:', error);
-                                    await i.qReply({ 
-                                        content: 'An error occurred while processing your request. Please try again later.', 
-                                        type: 'error'
-                                    });
-                                }
-                            });
-                        } catch (error) {
-                            if (error.code !== 10008) { // Ignore "Unknown Message" error
-                                console.error('Failed to update message:', error);
-                            }
-                        }
-                    });
                 } catch (error) {
                     console.error('Error handling the command:', error);
                     interaction.qReply({ 
