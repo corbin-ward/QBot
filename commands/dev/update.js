@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { saveQueueData } = require('../../events/shutdown.js');
 
 module.exports = {
+    cooldown: 120,
     data: new SlashCommandBuilder()
         .setName('update')
         .setDescription('Saves the current queue data and restarts the bot for updates.'),
