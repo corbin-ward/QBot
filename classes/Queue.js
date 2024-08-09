@@ -29,6 +29,9 @@ class Queue {
         this.ready = options.ready || false;
         this.ended = options.ended || false;
 
+        this.interactionQueue = []; // Queue to store interactions
+        this.isProcessing = false; // Flag to check if processing is ongoing
+
         this.embed = new EmbedBuilder()
             .setColor(0x5A6AEF)
             .setAuthor({ name: `Started by ${this.creator.name}`, iconURL: this.creator.avatar})
@@ -100,137 +103,9 @@ class Queue {
                 });
             }
 
-            collector.on('collect', async (i) => {
-                try {
-                    if (i.customId === 'join') {
-                        if (this.main.has(i.user.id)) {
-                            await i.qReply({ 
-                                content: 'You are already in the queue.', 
-                                type: 'warning'
-                            });
-                        }
-                        else if (this.waitlist.has(i.user.id)) {
-                            await i.qReply({ 
-                                content: 'You are already in the waitlist.', 
-                                type: 'warning'
-                            });
-                        }
-                        else if (this.main.size + this.numGuests < this.mainMax) {
-                            await this.addMain(i.user);
-                            await this.updateResponse();
-                            await i.qReply({ 
-                                content: 'You have been added to the queue.', 
-                                type: 'success'
-                            });
-                        } else if (this.waitlist.size < this.waitlistMax) {
-                            await this.addWaitlist(i.user);
-                            await this.updateResponse();
-                            await i.qReply({ 
-                                content: 'You have been added to the waitlist since the queue is full.', 
-                                type: 'success'
-                            });
-                        } else {
-                            await i.qReply({ 
-                                content: 'Both the queue and the waitlist are full.', 
-                                type: 'warning'
-                            });
-                        }
-                    } else if (i.customId === 'addGuest') {
-                        if (this.main.has(i.user.id)) {
-                            if (this.main.get(i.user.id).guests >= maxGuests) {
-                                await i.qReply({ 
-                                    content: `You have already hit the max of ${maxGuests} guest(s).`, 
-                                    type: 'warning'
-                                });
-                            } else if (this.main.size + this.numGuests < this.mainMax) {
-                                await this.addGuest(i.user);
-                                await this.updateResponse();
-                                await i.qReply({ 
-                                    content: 'Your guest has been added to the queue.', 
-                                    type: 'success'
-                                });
-                            } else {
-                                await i.qReply({ 
-                                    content: 'The queue is full. Guests may not be added to the waitlist.', 
-                                    type: 'warning'
-                                });
-                            }
-                        } else {
-                            await i.qReply({ 
-                                content: 'You must be in the queue to add a guest.', 
-                                type: 'warning'
-                            });
-                        }
-                    } else if (i.customId === 'readyUp') {
-                        if (this.main.has(i.user.id)) {
-                            await this.readyUp(i.user);
-                            await this.checkEnd();
-                            await this.updateResponse();
-                            await i.qReply({ 
-                                content: `<@${i.user.id}>, you have successfully readied up!`, 
-                                type: 'success'
-                            });
-                        } else {
-                            await i.qReply({ 
-                                content: 'You are not in the queue.', 
-                                type: 'warning'
-                            });
-                        }
-                    } else if (i.customId === 'leave') {
-                        if (this.main.get(i.user.id)) {
-                            if (this.main.get(i.user.id).ready) {
-                                await i.qReply({ 
-                                    content: 'You cannot leave the queue after you have readied up.', 
-                                    type: 'warning'
-                                });
-                            } else {
-                                await this.removeMain(i.user);
-                                await this.fillMain();
-                                if(this.ready) await this.checkEnd();
-                                await this.updateResponse();
-                                await i.qReply({ 
-                                    content: 'You have been removed from the queue.', 
-                                    type: 'success'
-                                });
-                            }
-                        } else if (this.waitlist.has(i.user.id)) {
-                            await this.removeWaitlist(i.user);
-                            if(this.ready) await this.checkEnd();
-                            await this.updateResponse();
-                            await i.qReply({ 
-                                content: 'You have been removed from the waitlist.', 
-                                type: 'success'
-                            });
-                        } else {
-                            await i.qReply({ 
-                                content: 'You are not in the queue or waitlist.', 
-                                type: 'warning'
-                            });
-                        }
-                    } else if (i.customId === 'cancel') {
-                        if (i.user.id === this.creator.id) {
-                            await this.cancel();
-                            collector.stop(); // Stop the collector when the queue is canceled
-                            await this.updateResponse();
-                            await i.qReply({ 
-                                content: `${this.name} for <t:${this.start}:t> has been canceled by ${i.user}`, 
-                                type: 'info',
-                                ephemeral: false
-                            });
-                        } else {
-                            await i.qReply({ 
-                                content: 'Only the queue creator can cancel the queue.', 
-                                type: 'warning'
-                            });
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error handling button interaction:', error);
-                    await i.qReply({ 
-                        content: 'An error occurred while processing your request. Please try again later.', 
-                        type: 'error' 
-                    });
-                }
+            collector.on('collect', (i) => {
+                this.interactionQueue.push(i); // Add interaction to the queue
+                this.processNextInteraction(); // Start processing the queue
             });
 
             collector.on('end', async () => {
@@ -252,6 +127,171 @@ class Queue {
             });
         } catch (error) {
             console.error('Error starting collector:', error);
+        }
+    }
+    
+    async processNextInteraction() {
+        if (this.isProcessing || this.interactionQueue.length === 0) {
+            return; // If already processing or no interactions in queue, do nothing
+        }
+
+        this.isProcessing = true; // Set processing flag to true
+        const interaction = this.interactionQueue.shift(); // Get the next interaction from the queue
+
+        try {
+            switch (interaction.customId) {
+                case 'join':
+                    await this.handleJoin(interaction);
+                    break;
+                case 'addGuest':
+                    await this.handleAddGuest(interaction);
+                    break;
+                case 'readyUp':
+                    await this.handleReadyUp(interaction);
+                    break;
+                case 'leave':
+                    await this.handleLeave(interaction);
+                    break;
+                case 'cancel':
+                    await this.handleCancel(interaction);
+                    break;
+                default:
+                    console.warn(`Unknown interaction customId: ${interaction.customId}`);
+                    break;
+            }
+        } catch (error) {
+            console.error('Error handling button interaction:', error);
+        } finally {
+            this.isProcessing = false; // Release processing flag
+            this.processNextInteraction(); // Process the next interaction in the queue
+        }
+    }
+
+    async handleJoin(interaction) {
+        if (this.main.has(interaction.user.id)) {
+            await interaction.qReply({
+                content: 'You are already in the queue.',
+                type: 'warning'
+            });
+        } else if (this.waitlist.has(interaction.user.id)) {
+            await interaction.qReply({
+                content: 'You are already in the waitlist.',
+                type: 'warning'
+            });
+        } else if (this.main.size + this.numGuests < this.mainMax) {
+            await this.addMain(interaction.user);
+            await this.updateResponse();
+            await interaction.qReply({
+                content: 'You have been added to the queue.',
+                type: 'success'
+            });
+        } else if (this.waitlist.size < this.waitlistMax) {
+            await this.addWaitlist(interaction.user);
+            await this.updateResponse();
+            await interaction.qReply({
+                content: 'You have been added to the waitlist since the queue is full.',
+                type: 'success'
+            });
+        } else {
+            await interaction.qReply({
+                content: 'Both the queue and the waitlist are full.',
+                type: 'warning'
+            });
+        }
+    }
+
+    async handleAddGuest(interaction) {
+        if (this.main.has(interaction.user.id)) {
+            if (this.main.get(interaction.user.id).guests >= maxGuests) {
+                await interaction.qReply({
+                    content: `You have already hit the max of ${maxGuests} guest(s).`,
+                    type: 'warning'
+                });
+            } else if (this.main.size + this.numGuests < this.mainMax) {
+                await this.addGuest(interaction.user);
+                await this.updateResponse();
+                await interaction.qReply({
+                    content: 'Your guest has been added to the queue.',
+                    type: 'success'
+                });
+            } else {
+                await interaction.qReply({
+                    content: 'The queue is full. Guests may not be added to the waitlist.',
+                    type: 'warning'
+                });
+            }
+        } else {
+            await interaction.qReply({
+                content: 'You must be in the queue to add a guest.',
+                type: 'warning'
+            });
+        }
+    }
+
+    async handleReadyUp(interaction) {
+        if (this.main.has(interaction.user.id)) {
+            await this.readyUp(interaction.user);
+            await this.checkEnd();
+            await this.updateResponse();
+            await interaction.qReply({
+                content: `<@${interaction.user.id}>, you have successfully readied up!`,
+                type: 'success'
+            });
+        } else {
+            await interaction.qReply({
+                content: 'You are not in the queue.',
+                type: 'warning'
+            });
+        }
+    }
+
+    async handleLeave(interaction) {
+        if (this.main.get(interaction.user.id)) {
+            if (this.main.get(interaction.user.id).ready) {
+                await interaction.qReply({
+                    content: 'You cannot leave the queue after you have readied up.',
+                    type: 'warning'
+                });
+            } else {
+                await this.removeMain(interaction.user);
+                await this.fillMain();
+                if(this.ready) await this.checkEnd();
+                await this.updateResponse();
+                await interaction.qReply({
+                    content: 'You have been removed from the queue.',
+                    type: 'success'
+                });
+            }
+        } else if (this.waitlist.has(interaction.user.id)) {
+            await this.removeWaitlist(interaction.user);
+            if(this.ready) await this.checkEnd();
+            await this.updateResponse();
+            await interaction.qReply({
+                content: 'You have been removed from the waitlist.',
+                type: 'success'
+            });
+        } else {
+            await interaction.qReply({
+                content: 'You are not in the queue or waitlist.',
+                type: 'warning'
+            });
+        }
+    }
+
+    async handleCancel(interaction) {
+        if (interaction.user.id === this.creator.id) {
+            await this.cancel();
+            await this.updateResponse();
+            await interaction.qReply({
+                content: `${this.name} for <t:${this.start}:t> has been canceled by ${interaction.user}`,
+                type: 'info',
+                ephemeral: false
+            });
+        } else {
+            await interaction.qReply({
+                content: 'Only the queue creator can cancel the queue.',
+                type: 'warning'
+            });
         }
     }
 
@@ -466,6 +506,7 @@ class Queue {
 
     async readyUp(user) {
         try {
+            console.log('User Timers:', this.userTimers);
             const userObj = await this.response.client.users.fetch(user.id);
             let prevTimer = this.userTimers.get(user.id);
             const dmChannel = await userObj.createDM();

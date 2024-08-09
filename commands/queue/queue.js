@@ -93,12 +93,14 @@ module.exports = {
                 )
         ),
     async autocomplete(interaction) {
-        const subcommand = interaction.options.getSubcommand();
-        const focusedOption = interaction.options.getFocused();
+        try {
+            const subcommand = interaction.options.getSubcommand();
+            const focusedOption = interaction.options.getFocused();
 
-        switch (subcommand) {
-            case 'new': {
-                try {
+            let choices = [];
+
+            switch (subcommand) {
+                case 'new': {
                     const serverId = interaction.guild.id;
                     const templatesRef = db.collection('templates');
                     const serverTemplatesRef = db.collection('serverTemplates').where('serverId', '==', serverId);
@@ -107,29 +109,33 @@ module.exports = {
                         serverTemplatesRef.get()
                     ]);
 
+                    if (templatesSnapshot.empty) {
+                        return interaction.respond([]);
+                    }
+
                     const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
-                    const filtered = templatesSnapshot.docs.map(doc => {
+                    choices = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
-                        if (isLoaded) { 
-                            return { name: `${template.name} by ${template.creatorUsername}`, value: doc.id };
-                        }
-                    }).filter(choice => choice && ( 
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
-                    ));
-            
-                    await interaction.respond(filtered);
-                } catch (error) {
-                    console.error('Error fetching templates for load autocomplete:', error);
-                    await interaction.respond(['Error fetching templates']);
+                        return isLoaded ? { name: `${template.name} by ${template.creatorUsername}`, value: doc.id } : null;
+                    }).filter(choice => choice); // Filter out any null or undefined values
+                    break;
                 }
-                break;
+                default:
+                    await interaction.respond([]);
+                    return;
             }
-            default: {
-                await interaction.respond([]);
-                break;
-            }
+
+            // Filter and limit the choices to 25 max
+            const filtered = choices.filter(choice =>
+                choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                choice.value.toLowerCase().includes(focusedOption.toLowerCase())
+            ).slice(0, 25); // Limit to 25 choices
+
+            await interaction.respond(filtered);
+        } catch (error) {
+            console.error('Error during autocomplete:', error);
+            await interaction.respond([{ name: 'Error fetching templates', value: 'error' }]);
         }
     },
     async execute(interaction) {

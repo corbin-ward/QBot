@@ -48,7 +48,8 @@ async function saveQueueData(client) {
                                 main: mapToObject(queue.main),
                                 waitlist: mapToObject(queue.waitlist),
                                 numGuests: queue.numGuests || 0,
-                                userTimers: mapToObject(userTimers)
+                                userTimers: mapToObject(userTimers),
+                                ready: queue.ready
                             });
                         } else {
                             console.warn(`Queue with key ${key} has no response associated with it and was not saved.`);

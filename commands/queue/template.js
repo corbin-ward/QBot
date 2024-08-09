@@ -95,30 +95,25 @@ module.exports = {
         ),
     async autocomplete(interaction) {
         try {
-            // handle the autocompletion response
             const subcommand = interaction.options.getSubcommand();
             const focusedOption = interaction.options.getFocused();
-        
+    
+            let choices = [];
+    
             switch (subcommand) {
                 case 'delete': {
                     const userId = interaction.user.id;
                     const templatesRef = db.collection('templates').where('creatorId', '==', userId);
                     const snapshot = await templatesRef.get();
-
+    
                     if (snapshot.empty) {
                         return interaction.respond([]);
                     }
-
-                    const choices = snapshot.docs.map(doc => ({
+    
+                    choices = snapshot.docs.map(doc => ({
                         name: doc.data().name,
                         value: doc.id
                     }));
-
-                    const filtered = choices.filter(choice =>
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
-                    );
-                    await interaction.respond(filtered);
                     break;
                 }
                 case 'load': {
@@ -129,13 +124,13 @@ module.exports = {
                         templatesRef.get(),
                         serverTemplatesRef.get()
                     ]);
-
+    
                     if (templatesSnapshot.empty) {
                         return interaction.respond([]);
                     }
-                
+    
                     const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
-                    const choices = templatesSnapshot.docs.map(doc => {
+                    choices = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
                         return {
@@ -143,13 +138,6 @@ module.exports = {
                             value: doc.id,
                         };
                     });
-
-                    const filtered = choices.filter(choice =>
-                        choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
-                        choice.value.toLowerCase().includes(focusedOption.toLowerCase())
-                    );
-                
-                    await interaction.respond(filtered);
                     break;
                 }
                 case 'remove': {
@@ -160,13 +148,13 @@ module.exports = {
                         templatesRef.get(),
                         serverTemplatesRef.get()
                     ]);
-
+    
                     if (templatesSnapshot.empty) {
                         return interaction.respond([]);
                     }
-
+    
                     const loadedTemplateIds = new Set(serverTemplatesSnapshot.docs.map(doc => doc.data().templateId));
-                    const filtered = templatesSnapshot.docs.map(doc => {
+                    choices = templatesSnapshot.docs.map(doc => {
                         const template = doc.data();
                         const isLoaded = loadedTemplateIds.has(doc.id);
                         if (isLoaded) {
@@ -176,19 +164,25 @@ module.exports = {
                             };
                         }
                     }).filter(Boolean); // Filter out undefined values
-
-                    await interaction.respond(filtered);
                     break;
                 }
                 default:
                     await interaction.respond([]);
-                    break;
+                    return;
             }
+    
+            // Filter and limit the choices to 25 max
+            const filtered = choices.filter(choice =>
+                choice.name.toLowerCase().includes(focusedOption.toLowerCase()) ||
+                choice.value.toLowerCase().includes(focusedOption.toLowerCase())
+            ).slice(0, 25); // Limit to 25 choices
+    
+            await interaction.respond(filtered);
         } catch (error) {
             console.error('Error during autocomplete:', error);
-            await interaction.respond(['Error fetching templates']);
+            await interaction.respond([{ name: 'Error fetching templates', value: 'error' }]);
         }
-    },
+    },        
     async execute(interaction) {
         const subcommand = interaction.options.getSubcommand();
         const storage = admin.storage().bucket();

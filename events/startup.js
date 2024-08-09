@@ -2,6 +2,8 @@ const admin = require('firebase-admin');
 const Queue = require('../classes/Queue.js');
 const moment = require('moment-timezone');
 
+const readyUpTime = 10;
+
 async function fetchResponse(client, channelId, messageId) {
     try {
         const channel = await client.channels.fetch(channelId);
@@ -65,26 +67,34 @@ async function loadQueueData(client) {
                     main: mainMap,
                     waitlist: waitlistMap,
                     numGuests: data.numGuests,
-                    userTimers: userTimersMap
+                    userTimers: userTimersMap,
+                    ready: data.ready
                 });
 
                 client.activeQueues.set(doc.id, queue);
 
                 // Run readyQueue function and set timers if start time has passed
                 const currentTime = moment().tz(queue.timezone).unix();
-                if (currentTime >= queue.start) {
+
+                if(queue.ready) {
                     console.log(`Queue is readying`);
                     await queue.readyQueue();
                     for (const [userId, timerData] of queue.userTimers.entries()) {
                         const { timeLeft } = timerData;
                         if (timeLeft > 0) {
-                            queue.setTimer(userId, timeLeft);
+                            await queue.setTimer(userId, timeLeft);
                         } else {
-                            queue.userTimers.delete(userId);
+                           await queue.userTimers.delete(userId);
                         }
                     }
+                } else if(currentTime >= queue.start) {
+                    console.log(`Queue was collecting and is now readying`);
+                    await queue.readyQueue();
+                    await queue.main.forEach(user => {
+                        queue.setTimer(user.id, readyUpTime * 60_000, true);
+                    });
                 } else {
-                    console.log(`Queue is not readying`);
+                    console.log(`Queue is collecting`);
                     await queue.updateEmbed();
                 }
 
