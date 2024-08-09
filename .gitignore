@@ -1,3 +1,4 @@
 node_modules
 config/
 delete-commands.js
+.DS_Store

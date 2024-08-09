@@ -68,11 +68,19 @@ client.login(token);
 
 // Handle graceful shutdown
 process.on('SIGTERM', async () => {
+	console.log('Bot is shutting down, saving data...');
     await saveQueueData(client);
     process.exit(0);
 });
 
 process.on('SIGINT', async () => {
+	console.log('Bot is shutting down, saving data...');
+    await saveQueueData(client);
+    process.exit(0);
+});
+
+process.on('beforeExit', async () => {
+	console.log('Bot is shutting down, saving data...');
     await saveQueueData(client);
     process.exit(0);
 });
